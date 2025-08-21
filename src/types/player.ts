@@ -1,3 +1,6 @@
+import type { Match } from './match';
+import type { Model, NkApi } from './ninjakiwi';
+
 export interface PlayerDocument {
     _id?: string;
     userId: string;
@@ -10,4 +13,14 @@ export interface PlayerDocument {
         currentlyInHoM: boolean;
         lastUpdated: Date;
     }[];
+}
+
+export interface PlayerMatchesResponse {
+    error: string;
+    success: boolean;
+    body: Match[];
+    model: Model;
+    next: NkApi | null;
+    prev: NkApi | null;
+    maxPages: number;
 }

@@ -4,6 +4,10 @@ export function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function extractSeasonId(seasonName: string): number {
+    return parseInt(seasonName.replace('Season ', ''));
+}
+
 export function extractUserId(profileUrl: string): string {
     return profileUrl.replace('https://data.ninjakiwi.com/battles2/users/', '');
 }

@@ -1,20 +1,70 @@
-import { LeaderboardPlayer } from '../types/leaderboard';
-import { Match } from '../types/match';
-import { extractUserId, fetchWithRetry } from '../utils/helpers';
+import { API_ENDPOINTS } from '../config/constants';
+import { extractSeasonId, extractUserId, fetchWithRetry } from '../utils/helpers';
+import { logger } from '../utils/logger';
+import type { LeaderboardPlayer, LeadrboardResponse } from '../types/leaderboard';
+import type { Match } from '../types/match';
+import type { PlayerMatchesResponse } from '../types/player';
+import type { Season, SeasonsResponse } from '../types/season';
 
-async function fetchLeaderboardPage(seasonId: number, pageNb: number) {
-    console.log(`Fetching leaderboard page ${pageNb}...`);
-    const url = `https://data.ninjakiwi.com/battles2/homs/season_${seasonId}/leaderboard?page=${pageNb}`;
-    const data = await fetchWithRetry(url);
+export async function getLiveSeasonId(): Promise<number> {
+    try {
+        logger.debug('Looking for live season...');
+        const seasonsData = await fetchSeasons();
 
-    if (data) {
-        console.log(`Got ${data.body?.length || 0} players from leaderboard page ${pageNb}`);
+        if (!seasonsData || seasonsData.length === 0) {
+            logger.error('No seasons data available');
+            throw new Error('No seasons data available');
+        }
+        const liveSeason = seasonsData.filter((season) => season.live)[0];
+        return extractSeasonId(liveSeason.name);
+    } catch (error) {
+        logger.error('Could not get live season:', { error });
+        throw error;
     }
+}
+
+export async function fetchSeasons(): Promise<Season[]> {
+    logger.debug('Fetching seaons list...');
+
+    const url = API_ENDPOINTS.SEASONS;
+    const data: SeasonsResponse = await fetchWithRetry(url);
+
+    if (data.error) {
+        logger.error(`Error while fetching seasons list: ${data.error}`);
+    }
+
+    if (!data.success) {
+        logger.error('Fetch of seasons list was not successful');
+    }
+
+    logger.debug(`Total seasons found: ${data?.body?.length || 0}`);
+
+    // todo: maybe one day there will be more than one page if that matters ...
+
+    return data.body || [];
+}
+
+async function fetchLeaderboardPage(seasonId: number, pageNb = 1): Promise<LeadrboardResponse> {
+    const lbPage = `leaderboard page ${pageNb}`;
+    logger.debug(`Fetching ${lbPage}...`);
+
+    const url = API_ENDPOINTS.LEADERBOARD(seasonId, pageNb);
+    const data: LeadrboardResponse = await fetchWithRetry(url);
+
+    if (data.error) {
+        logger.error(`Error while fetching ${lbPage}: ${data.error}`);
+    }
+
+    if (!data.success) {
+        logger.error(`Fetch of ${lbPage} was not successful`);
+    }
+
+    logger.debug(`Got ${data?.body?.length || 0} players from ${lbPage}`);
 
     return data;
 }
 
-export async function fetchLeaderboard(seasonId: number) {
+export async function fetchLeaderboard(seasonId: number): Promise<LeaderboardPlayer[]> {
     console.log(`Fetching leaderboard for season ${seasonId}...`);
     const players: LeaderboardPlayer[] = [];
     let pageNb = 1;
@@ -24,11 +74,11 @@ export async function fetchLeaderboard(seasonId: number) {
         const pageData = await fetchLeaderboardPage(seasonId, pageNb);
 
         if (!pageData) {
-            console.error(`Could not fetch leaderboard page ${pageNb}, stopping...`);
+            logger.error(`Could not fetch leaderboard page ${pageNb}, stopping...`);
             break;
         }
 
-        if (pageData.body && pageData.body.length > 0) {
+        if (pageData?.body?.length > 0) {
             players.push(...pageData.body);
         }
 
@@ -39,21 +89,27 @@ export async function fetchLeaderboard(seasonId: number) {
         }
     }
 
-    console.log(`Total players found: ${players.length}`);
+    logger.debug(`Total players found: ${players.length}`);
     return players;
 }
 
-async function fetchPlayerMatches(userId: string) {
-    console.log(`Fetching matches for user ${userId}...`);
-    const url = `https://data.ninjakiwi.com/battles2/users/${userId}/matches`;
-    const data = await fetchWithRetry(url);
+async function fetchPlayerMatches(userId: string): Promise<Match[]> {
+    const mUser = `matches for user ${userId}`;
+    logger.debug(`Fetching ${mUser}...`);
+    const url = API_ENDPOINTS.PLAYER_MATCHES(userId);
+    const data: PlayerMatchesResponse = await fetchWithRetry(url);
 
-    if (data) {
-        console.log(`Got ${data.body?.length || 0} matches for user ${userId}`);
-        return data.body || [];
+    if (data.error) {
+        logger.error(`Error while fetching ${mUser}: ${data.error}`);
     }
 
-    return [];
+    if (!data.success) {
+        logger.error(`Fetch ${mUser} was not successful`);
+    }
+
+    console.log(`Got ${data?.body?.length || 0} matches for user ${userId}`);
+
+    return data.body || [];
 }
 
 function addUniqueMatches(playerMatches: Match[], allMatches: Match[], seenMatchIds: Set<string>) {

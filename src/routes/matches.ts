@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
-import { CachedMatches } from '../types/match';
+import type { CachedMatches } from '../types/match';
 import { env } from '../config/environment';
-import { fetchLeaderboard, processPlayersMatches } from '../services/ninjakiwi';
+import { fetchLeaderboard, getLiveSeasonId, processPlayersMatches } from '../services/ninjakiwi';
 
 export const matches = new Hono();
 
@@ -11,7 +11,8 @@ let isCurrentlyFetching = false;
 async function getMatches() {
     try {
         console.log('Starting to get matches...');
-        const leaderboardData = await fetchLeaderboard(34);
+        const seasonId = await getLiveSeasonId();
+        const leaderboardData = await fetchLeaderboard(seasonId);
 
         if (!leaderboardData || leaderboardData.length === 0) {
             console.log('No leaderboard data available');
