@@ -1,11 +1,11 @@
-const NK_API = 'https://data.ninjakiwi.com/battles2';
+const NK_API_BASE_URL = 'https://data.ninjakiwi.com/battles2';
 
-export const API_ENDPOINTS = {
+export const NK_API = {
     LEADERBOARD: (seasonId: number, page?: number) =>
-        `${NK_API}/homs/season_${seasonId}/leaderboard${page ? `?page=${page}` : ''}`,
-    PLAYER_MATCHES: (userId: string) => `${NK_API}/users/${userId}/matches`,
-    PLAYER_PROFILE: (userId: string) => `${NK_API}/users/${userId}`,
-    SEASONS: `${NK_API}/homs`,
+        `${NK_API_BASE_URL}/homs/season_${seasonId}/leaderboard${page ? `?page=${page}` : ''}`,
+    PLAYER_MATCHES: (userId: string) => `${NK_API_BASE_URL}/users/${userId}/matches`,
+    PLAYER_PROFILE: (userId: string) => `${NK_API_BASE_URL}/users/${userId}`,
+    SEASONS: `${NK_API_BASE_URL}/homs`,
 } as const;
 
 export const ERROR_MESSAGES = {

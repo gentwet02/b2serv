@@ -1,4 +1,4 @@
-import { API_ENDPOINTS } from '../config/constants';
+import { NK_API } from '../config/constants';
 import { extractSeasonId, extractUserId, fetchWithRetry } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import type { LeaderboardPlayer, LeadrboardResponse } from '../types/leaderboard';
@@ -26,7 +26,7 @@ export async function getLiveSeasonId(): Promise<number> {
 export async function fetchSeasons(): Promise<Season[]> {
     logger.debug('Fetching seaons list...');
 
-    const url = API_ENDPOINTS.SEASONS;
+    const url = NK_API.SEASONS;
     const data: SeasonsResponse = await fetchWithRetry(url);
 
     if (data.error) {
@@ -48,7 +48,7 @@ async function fetchLeaderboardPage(seasonId: number, pageNb = 1): Promise<Leadr
     const lbPage = `leaderboard page ${pageNb}`;
     logger.debug(`Fetching ${lbPage}...`);
 
-    const url = API_ENDPOINTS.LEADERBOARD(seasonId, pageNb);
+    const url = NK_API.LEADERBOARD(seasonId, pageNb);
     const data: LeadrboardResponse = await fetchWithRetry(url);
 
     if (data.error) {
@@ -96,7 +96,7 @@ export async function fetchLeaderboard(seasonId: number): Promise<LeaderboardPla
 async function fetchPlayerMatches(userId: string): Promise<Match[]> {
     const mUser = `matches for user ${userId}`;
     logger.debug(`Fetching ${mUser}...`);
-    const url = API_ENDPOINTS.PLAYER_MATCHES(userId);
+    const url = NK_API.PLAYER_MATCHES(userId);
     const data: PlayerMatchesResponse = await fetchWithRetry(url);
 
     if (data.error) {
