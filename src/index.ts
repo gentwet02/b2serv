@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
-import { matches } from './routes/matches';
+import { CORS } from './middleware/cors';
+import { matchesHistory } from './routes/matchesHistory';
 
 const app = new Hono();
 
-app.route('/matches', matches);
+app.use('*', CORS);
+
+app.route('/matches-history', matchesHistory);
 
 export default app;

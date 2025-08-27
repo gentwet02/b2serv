@@ -3,7 +3,7 @@ import type { CachedMatches } from '../types/match';
 import { env } from '../config/environment';
 import { updateMatchesHistoryCache } from '../services/matchesHistory';
 
-export const matches = new Hono();
+export const matchesHistory = new Hono();
 
 let cachedMatches: CachedMatches | null = null;
 let isCurrentlyFetching = false;
@@ -15,7 +15,7 @@ async function setCachedMatches() {
     );
 }
 
-matches.get('/', async (c) => {
+matchesHistory.get('/', async (c) => {
     return c.json({
         matches: cachedMatches,
         error: cachedMatches
@@ -25,7 +25,7 @@ matches.get('/', async (c) => {
     });
 });
 
-matches.get('/status', (c) => {
+matchesHistory.get('/status', (c) => {
     return c.json({
         message: 'running',
         hasCache: !!cachedMatches,
@@ -41,7 +41,7 @@ matches.get('/status', (c) => {
     });
 });
 
-matches.get('/force-update', async (c) => {
+matchesHistory.get('/force-update', async (c) => {
     if (isCurrentlyFetching) {
         return c.json({ message: 'Update already in progress' });
     }

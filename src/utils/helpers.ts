@@ -5,7 +5,7 @@ export function delay(ms: number): Promise<void> {
 }
 
 export function extractSeasonId(seasonName: string): number {
-    return parseInt(seasonName.replace('Season ', ''));
+    return parseInt(seasonName.replace('Season ', '')) - 1;
 }
 
 export function extractUserId(profileUrl: string): string {
