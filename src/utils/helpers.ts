@@ -1,4 +1,4 @@
-import { env } from '../config/environment';
+import { env } from '@/config/environment';
 
 export function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));

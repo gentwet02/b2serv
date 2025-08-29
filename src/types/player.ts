@@ -1,5 +1,5 @@
-import type { Match } from './match';
-import type { Model, NkApi } from './ninjakiwi';
+import type { Match } from '@/types/match';
+import type { Model, NkApi } from '@/types/ninjakiwi';
 
 export interface PlayerDocument {
     _id?: string;

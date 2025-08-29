@@ -1,5 +1,5 @@
-import { CachedMatches } from '../types/match';
-import { fetchLeaderboard, getLiveSeasonId, processPlayersMatches } from './ninjakiwi';
+import { CachedMatches } from '@/types/match';
+import { fetchLeaderboard, getLiveSeasonId, processPlayersMatches } from '@/services/ninjakiwi';
 
 async function getMatchesHistory() {
     try {

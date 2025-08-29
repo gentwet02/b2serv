@@ -1,4 +1,4 @@
-import { Environment } from '../types/config';
+import { Environment } from '@/types/config';
 
 export const env: Environment = {
     NODE_ENV: (process.env.NODE_ENV as Environment['NODE_ENV']) || 'development',

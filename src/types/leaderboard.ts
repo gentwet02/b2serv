@@ -1,4 +1,4 @@
-import type { Model, NkApi } from './ninjakiwi';
+import type { Model, NkApi } from '@/types/ninjakiwi';
 
 export interface LeaderboardPlayer {
     /** The display name for this user */

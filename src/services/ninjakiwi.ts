@@ -1,10 +1,10 @@
-import { NK_API } from '../config/constants';
-import { extractSeasonId, extractUserId, fetchWithRetry } from '../utils/helpers';
-import { logger } from '../utils/logger';
-import type { LeaderboardPlayer, LeadrboardResponse } from '../types/leaderboard';
-import type { Match } from '../types/match';
-import type { PlayerMatchesResponse } from '../types/player';
-import type { Season, SeasonsResponse } from '../types/season';
+import { NK_API } from '@/config/constants';
+import { extractSeasonId, extractUserId, fetchWithRetry } from '@/utils/helpers';
+import { logger } from '@/utils/logger';
+import type { LeaderboardPlayer, LeadrboardResponse } from '@/types/leaderboard';
+import type { Match } from '@/types/match';
+import type { PlayerMatchesResponse } from '@/types/player';
+import type { Season, SeasonsResponse } from '@/types/season';
 
 export async function getLiveSeasonId(): Promise<number> {
     try {

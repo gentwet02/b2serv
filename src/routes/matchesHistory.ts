@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
-import type { CachedMatches } from '../types/match';
-import { env } from '../config/environment';
-import { updateMatchesHistoryCache } from '../services/matchesHistory';
+import type { CachedMatches } from '@/types/match';
+import { env } from '@/config/environment';
+import { updateMatchesHistoryCache } from '@/services/matchesHistory';
 
 export const matchesHistory = new Hono();
 

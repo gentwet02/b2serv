@@ -1,5 +1,5 @@
-import { env } from '../config/environment';
-import { LogLevel } from '../types/server';
+import { env } from '@/config/environment';
+import { LogLevel } from '@/types/server';
 
 function formatMessage(level: LogLevel, message: string, data?: object): string {
     const timestamp = new Date().toISOString();
