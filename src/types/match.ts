@@ -1,11 +1,11 @@
 export interface MatchPlayer {
     displayName: string;
     hero: string;
-    heroPortrait: string;
+    heroPortrait?: string;
     towerone: string;
     towertwo: string;
     towerthree: string;
-    currentUser: boolean;
+    currentUser?: boolean;
     result: string;
     profileURL: string;
 }
@@ -13,17 +13,18 @@ export interface MatchPlayer {
 export interface Match {
     id: string;
     gametype: string;
-    map: string;
+    map?: string;
+    mapName?: string;
     duration: number;
     endRound: number;
-    mapURL: string;
+    mapURL?: string;
     playerLeft: MatchPlayer;
     playerRight: MatchPlayer;
 }
 
 export interface MatchDocument extends Match {
     _id?: string;
-    createdAt: Date;
+    timeStamp: Date;
     seasonId: number;
 }
 
@@ -31,4 +32,5 @@ export interface CachedMatches {
     lastUpdated: Date;
     totalMatches: number;
     matches: Match[];
+    seasonID: number;
 }

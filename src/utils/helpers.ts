@@ -1,4 +1,5 @@
 import { env } from '@/config/environment';
+import { logger } from './logger';
 
 export function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -23,16 +24,16 @@ export async function fetchWithRetry(url: string) {
 
             return await response.json();
         } catch (error) {
-            console.error(`Fetch failed for ${url} (attempt ${attempt}):`, error);
+            logger.error(`Fetch failed for ${url} (attempt ${attempt}): ${error}`);
 
             if (attempt < env.NK_FETCH_RETRIES) {
                 const timeoutDelay = attempt * 500;
-                console.log(`Retrying in ${timeoutDelay}ms...`);
+                logger.debug(`Retrying in ${timeoutDelay}ms...`);
                 await delay(timeoutDelay);
             }
         }
     }
 
-    console.error(`Failed to fetch ${url} after ${env.NK_FETCH_RETRIES} attempts`);
+    logger.error(`Failed to fetch ${url} after ${env.NK_FETCH_RETRIES} attempts`);
     return null;
 }

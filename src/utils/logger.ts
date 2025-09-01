@@ -21,7 +21,7 @@ export const logger = {
     },
 
     debug: (message: string, data?: object) => {
-        if (env.NODE_ENV === 'development') {
+        if (env.NODE_ENV === 'development' || env.NODE_ENV === 'test') {
             console.log(formatMessage('debug', message, data));
         }
     },

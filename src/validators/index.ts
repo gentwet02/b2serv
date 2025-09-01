@@ -35,7 +35,7 @@ export const MapName = {
 
 export const Result = {
     type: String,
-    enum: ['draw', 'lose', 'win'],
+    enum: ['cancelled', 'draw', 'lobbyDC', 'lose', 'opponentLobbyDC', 'win'],
 };
 
 export const Round = {

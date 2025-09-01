@@ -65,7 +65,7 @@ async function fetchLeaderboardPage(seasonId: number, pageNb = 1): Promise<Leadr
 }
 
 export async function fetchLeaderboard(seasonId: number): Promise<LeaderboardPlayer[]> {
-    console.log(`Fetching leaderboard for season ${seasonId}...`);
+    logger.debug(`Fetching leaderboard for season ${seasonId}...`);
     const players: LeaderboardPlayer[] = [];
     let pageNb = 1;
     let hasMorePages = true;
@@ -107,7 +107,7 @@ async function fetchPlayerMatches(userId: string): Promise<Match[]> {
         logger.error(`Fetch ${mUser} was not successful`);
     }
 
-    console.log(`Got ${data?.body?.length || 0} matches for user ${userId}`);
+    logger.debug(`Got ${data?.body?.length || 0} matches for user ${userId}`);
 
     return data.body || [];
 }
@@ -116,7 +116,9 @@ function addUniqueMatches(playerMatches: Match[], allMatches: Match[], seenMatch
     playerMatches.forEach((match: Match) => {
         if (!seenMatchIds.has(match.id)) {
             seenMatchIds.add(match.id);
-            allMatches.push(match);
+            // rename the keys from nk api to remove type confusion
+            const { map: mapName, ...rest } = match;
+            allMatches.push({ mapName, ...rest });
         }
     });
 }

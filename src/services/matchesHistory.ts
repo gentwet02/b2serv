@@ -1,26 +1,28 @@
 import { CachedMatches } from '@/types/match';
 import { fetchLeaderboard, getLiveSeasonId, processPlayersMatches } from '@/services/ninjakiwi';
+import { logger } from '@/utils/logger';
 
 async function getMatchesHistory() {
     try {
-        console.log('Starting to get matches...');
+        logger.debug('Starting to get matches...');
         const seasonId = await getLiveSeasonId();
         const leaderboardData = await fetchLeaderboard(seasonId);
 
         if (!leaderboardData || leaderboardData.length === 0) {
-            console.log('No leaderboard data available');
+            logger.debug('No leaderboard data available');
             throw new Error('No leaderboard data available');
         }
 
         const allMatches = await processPlayersMatches(leaderboardData);
 
-        console.log(`Total unique matches found: ${allMatches.length}`);
+        logger.debug(`Total unique matches found: ${allMatches.length}`);
         return {
             totalMatches: allMatches.length,
             matches: allMatches,
+            seasonID: seasonId,
         };
     } catch (error) {
-        console.error('Error in getMatchesHistory:', error);
+        logger.error(`Error in getMatchesHistory: ${error}`);
         throw error;
     }
 }
@@ -30,12 +32,12 @@ export async function updateMatchesHistoryCache(
     cachedMatches: CachedMatches | null
 ): Promise<[isCurrentlyFetching: boolean, cachedMatches: CachedMatches | null]> {
     if (isCurrentlyFetching) {
-        console.log('Already fetching data, skipping...');
+        logger.debug('Already fetching data, skipping...');
         return [isCurrentlyFetching, cachedMatches];
     }
 
     isCurrentlyFetching = true;
-    console.log(`[${new Date().toISOString()}] Starting scheduled data fetch...`);
+    logger.debug(`[${new Date().toISOString()}] Starting scheduled data fetch...`);
 
     try {
         const result = await getMatchesHistory();
@@ -45,11 +47,11 @@ export async function updateMatchesHistoryCache(
             lastUpdated: new Date(),
         };
 
-        console.log(
+        logger.debug(
             `[${new Date().toISOString()}] Cache updated successfully. ${result.totalMatches} matches stored.`
         );
     } catch (error) {
-        console.error(`[${new Date().toISOString()}] Failed to update cache:`, error);
+        logger.error(`[${new Date().toISOString()}] Failed to update cache: ${error}`);
     } finally {
         isCurrentlyFetching = false;
     }

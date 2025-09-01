@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import type { CachedMatches } from '@/types/match';
 import { env } from '@/config/environment';
 import { updateMatchesHistoryCache } from '@/services/matchesHistory';
+import { createMatch, getMatchById } from '@/services/database';
+import { logger } from '@/utils/logger';
 
 export const matchesHistory = new Hono();
 
@@ -13,6 +15,30 @@ async function setCachedMatches() {
         isCurrentlyFetching,
         cachedMatches
     );
+
+    if (!cachedMatches) {
+        return;
+    }
+
+    cachedMatches.matches.map(async (match) => {
+        const isAlreadyRegistered = await getMatchById(match.id);
+
+        if (isAlreadyRegistered) {
+            logger.debug(`match ${match.id} was already in the database`);
+            return;
+        }
+
+        if (!cachedMatches?.seasonID) {
+            logger.error(`cachedMatches has no season id defined`);
+            return;
+        }
+
+        createMatch({
+            timeStamp: new Date(),
+            seasonId: cachedMatches?.seasonID,
+            ...match,
+        });
+    });
 }
 
 matchesHistory.get('/', async (c) => {
@@ -50,14 +76,14 @@ matchesHistory.get('/force-update', async (c) => {
 });
 
 async function onServerStart() {
-    console.log('Server starting...');
+    logger.debug('Server starting...');
 
-    console.log('Performing initial data fetch...');
+    logger.debug('Performing initial data fetch...');
     await setCachedMatches();
     setInterval(setCachedMatches, env.NK_FETCH_INTERVAL);
-    console.log(`Scheduled updates every ${env.NK_FETCH_INTERVAL / 1000} seconds`);
+    logger.debug(`Scheduled updates every ${env.NK_FETCH_INTERVAL / 1000} seconds`);
 
-    console.log('Server ready!');
+    logger.debug('Server ready!');
 }
 
 onServerStart().catch(console.error);
