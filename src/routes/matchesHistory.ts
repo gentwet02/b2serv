@@ -35,7 +35,7 @@ async function setCachedMatches() {
 
         createMatch({
             timeStamp: new Date(),
-            seasonId: cachedMatches?.seasonID,
+            seasonId: cachedMatches.seasonID,
             ...match,
         });
     });
