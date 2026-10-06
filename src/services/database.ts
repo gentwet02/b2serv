@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { env } from '@/config/environment';
-import { Match } from '@/models/Match';
+import { matchSchema } from '@/models/Match';
 import { logger } from '@/utils/logger';
 import type { MatchDocument } from '@/types/match';
 
@@ -16,22 +16,27 @@ export default async function connectDB() {
     }
 }
 
-export const createMatch = async (match: MatchDocument) => {
+export const createMatch = async (match: MatchDocument, seasonId: number) => {
     try {
-        logger.debug(`Creating match with ID: ${match.id}`);
-        const newMatch = await Match.create(match);
-        logger.debug(`Successfully added match: ${match.id} to the database`);
+        logger.debug(`Creating match with ID: ${match.i}`);
+        const newMatch = await mongoose
+            .model('Match', matchSchema, `season${seasonId}`)
+            .create(match);
+        logger.debug(`Successfully added match: ${match.i} to the database`);
         return newMatch;
     } catch (error) {
-        logger.error(`Error creating match ${match.id}: ${error}`);
+        logger.error(`Error creating match ${match.i}: ${error}`);
         throw error;
     }
 };
 
-export const getAllMatches = async () => {
+export const getAllMatches = async (seasonId: number) => {
     try {
         logger.debug('Fetching all matches from database...');
-        const matches = await Match.find().sort({ timeStamp: -1 });
+        const matches = await mongoose
+            .model('Match', matchSchema, `season${seasonId}`)
+            .find()
+            .sort({ timeStamp: -1 });
         logger.debug(`Successfully fetched ${matches.length} matches`);
         return matches;
     } catch (error) {
@@ -40,10 +45,12 @@ export const getAllMatches = async () => {
     }
 };
 
-export const getMatchById = async (id: string) => {
+export const getMatchById = async (id: string, seasonId: number) => {
     try {
         logger.debug(`Fetching match with ID: ${id}`);
-        const match = await Match.findOne({ id });
+        const match = await mongoose
+            .model('Match', matchSchema, `season${seasonId}`)
+            .findOne({ i: id });
         if (match) {
             logger.debug(`Successfully found match: ${id}`);
         } else {
@@ -56,49 +63,20 @@ export const getMatchById = async (id: string) => {
     }
 };
 
-export const getMatchesBySeason = async (seasonId: number) => {
+export const getMatchesByUserId = async (id: string, seasonId: number) => {
     try {
-        logger.debug(`Fetching matches for season: ${seasonId}`);
-        const matches = await Match.find({ seasonId }).sort({ timeStamp: -1 });
-        logger.debug(`Successfully fetched ${matches.length} matches for season ${seasonId}`);
+        logger.debug(`Fetching matches with user ID: ${id}`);
+        const matches = await mongoose
+            .model('Match', matchSchema, `season${seasonId}`)
+            .find({ $or: [{ 'pl.i': id }, { 'pr.i': id }] });
+        if (matches) {
+            logger.debug(`Successfully found matches for user ID: ${id}`);
+        } else {
+            logger.debug(`No match found with user ID: ${id}`);
+        }
         return matches;
     } catch (error) {
-        logger.error(`Error fetching matches for season ${seasonId}: ${error}`);
-        throw error;
-    }
-};
-
-export const updateMatch = async (id: string, updateData: any) => {
-    try {
-        logger.debug(`Updating match with ID: ${id}`);
-        const updatedMatch = await Match.findOneAndUpdate({ id }, updateData, {
-            new: true,
-            runValidators: true,
-        });
-        if (updatedMatch) {
-            logger.debug(`Successfully updated match: ${id}`);
-        } else {
-            logger.debug(`No match found to update with ID: ${id}`);
-        }
-        return updatedMatch;
-    } catch (error) {
-        logger.error(`Error updating match ${id}: ${error}`);
-        throw error;
-    }
-};
-
-export const deleteMatch = async (id: string) => {
-    try {
-        logger.debug(`Deleting match with ID: ${id}`);
-        const deletedMatch = await Match.findOneAndDelete({ id });
-        if (deletedMatch) {
-            logger.debug(`Successfully deleted match: ${id}`);
-        } else {
-            logger.debug(`No match found to delete with ID: ${id}`);
-        }
-        return deletedMatch;
-    } catch (error) {
-        logger.error(`Error deleting match ${id}: ${error}`);
+        logger.error(`Error fetching match ${id}: ${error}`);
         throw error;
     }
 };

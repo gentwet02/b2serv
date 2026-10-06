@@ -1,47 +1,29 @@
-import { Hono } from 'hono';
-import type { CachedMatches } from '@/types/match';
 import { env } from '@/config/environment';
-import { updateMatchesHistoryCache } from '@/services/matchesHistory';
-import { createMatch, getMatchById } from '@/services/database';
+import { getLiveSeason } from '@/index';
+import { setCachedMatches } from '@/services/matchesHistory';
+import type { CachedMatches } from '@/types/match';
+import type { Season } from '@/types/season';
 import { logger } from '@/utils/logger';
+import { Hono } from 'hono';
 
 export const matchesHistory = new Hono();
 
 let cachedMatches: CachedMatches | null = null;
 let isCurrentlyFetching = false;
+let liveSeason: Season | null = null;
 
-async function setCachedMatches() {
-    [isCurrentlyFetching, cachedMatches] = await updateMatchesHistoryCache(
+async function setCache() {
+    const [isFetching, cache] = await setCachedMatches(
+        liveSeason,
         isCurrentlyFetching,
         cachedMatches
     );
-
-    if (!cachedMatches) {
-        return;
-    }
-
-    cachedMatches.matches.map(async (match) => {
-        const isAlreadyRegistered = await getMatchById(match.id);
-
-        if (isAlreadyRegistered) {
-            logger.debug(`match ${match.id} was already in the database`);
-            return;
-        }
-
-        if (!cachedMatches?.seasonID) {
-            logger.error(`cachedMatches has no season id defined`);
-            return;
-        }
-
-        createMatch({
-            timeStamp: new Date(),
-            seasonId: cachedMatches.seasonID,
-            ...match,
-        });
-    });
+    isCurrentlyFetching = isFetching;
+    cachedMatches = cache;
 }
 
 matchesHistory.get('/', async (c) => {
+    liveSeason = getLiveSeason();
     return c.json({
         matches: cachedMatches,
         error: cachedMatches
@@ -71,7 +53,7 @@ matchesHistory.get('/force-update', async (c) => {
     if (isCurrentlyFetching) {
         return c.json({ message: 'Update already in progress' });
     }
-    await setCachedMatches();
+    await setCache();
     return c.json({ message: 'Force update triggered. Check /status for progress.' });
 });
 
@@ -79,8 +61,8 @@ async function onServerStart() {
     logger.debug('Server starting...');
 
     logger.debug('Performing initial data fetch...');
-    await setCachedMatches();
-    setInterval(setCachedMatches, env.NK_FETCH_INTERVAL);
+    await setCache();
+    setInterval(setCache, env.NK_FETCH_INTERVAL);
     logger.debug(`Scheduled updates every ${env.NK_FETCH_INTERVAL / 1000} seconds`);
 
     logger.debug('Server ready!');

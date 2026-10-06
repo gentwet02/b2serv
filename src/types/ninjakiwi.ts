@@ -9,5 +9,5 @@ export interface Model {
     /** The internal name of the model */
     name: string;
     /** All the different key:value of the model */
-    parameters: { ['string']: string };
+    parameters: { [key: string]: string };
 }

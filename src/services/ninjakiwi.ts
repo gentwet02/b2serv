@@ -1,30 +1,13 @@
 import { NK_API } from '@/config/constants';
-import { extractSeasonId, extractUserId, fetchWithRetry } from '@/utils/helpers';
+import { delay, extractUserId, fetchWithRetry } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 import type { LeaderboardPlayer, LeadrboardResponse } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
 import type { PlayerMatchesResponse } from '@/types/player';
 import type { Season, SeasonsResponse } from '@/types/season';
 
-export async function getLiveSeasonId(): Promise<number> {
-    try {
-        logger.debug('Looking for live season...');
-        const seasonsData = await fetchSeasons();
-
-        if (!seasonsData || seasonsData.length === 0) {
-            logger.error('No seasons data available');
-            throw new Error('No seasons data available');
-        }
-        const liveSeason = seasonsData.filter((season) => season.live)[0];
-        return extractSeasonId(liveSeason.name);
-    } catch (error) {
-        logger.error('Could not get live season:', { error });
-        throw error;
-    }
-}
-
 export async function fetchSeasons(): Promise<Season[]> {
-    logger.debug('Fetching seaons list...');
+    logger.debug('Fetching seasons list...');
 
     const url = NK_API.SEASONS;
     const data: SeasonsResponse = await fetchWithRetry(url);
@@ -42,6 +25,10 @@ export async function fetchSeasons(): Promise<Season[]> {
     // todo: maybe one day there will be more than one page if that matters ...
 
     return data.body || [];
+}
+
+export async function fetchLiveSeason(seasons: Season[]): Promise<Season> {
+    return seasons.filter((season) => season.live)[0] || seasons[0];
 }
 
 async function fetchLeaderboardPage(seasonId: number, pageNb = 1): Promise<LeadrboardResponse> {
@@ -116,9 +103,7 @@ function addUniqueMatches(playerMatches: Match[], allMatches: Match[], seenMatch
     playerMatches.forEach((match: Match) => {
         if (!seenMatchIds.has(match.id)) {
             seenMatchIds.add(match.id);
-            // rename the keys from nk api to remove type confusion
-            const { map: mapName, ...rest } = match;
-            allMatches.push({ mapName, ...rest });
+            allMatches.push(match);
         }
     });
 }
@@ -128,6 +113,7 @@ async function processPlayerMatches(
     matches: Match[],
     seenIds: Set<string>
 ) {
+    delay(50);
     const userId = extractUserId(player.profile);
     const playerMatches = await fetchPlayerMatches(userId);
     addUniqueMatches(playerMatches, matches, seenIds);

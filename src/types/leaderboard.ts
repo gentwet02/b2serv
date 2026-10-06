@@ -28,3 +28,14 @@ export interface LeadrboardResponse {
     prev: NkApi | null;
     maxPages: number;
 }
+
+export interface LeaderboardPlayerEncoded {
+    i: string;
+    r?: string;
+    n: string;
+    d: string;
+}
+
+export interface CachedLeaderboards {
+    [key: number]: LeaderboardPlayerEncoded[];
+}

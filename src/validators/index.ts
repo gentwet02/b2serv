@@ -44,6 +44,12 @@ export const Round = {
     max: 100,
 };
 
+export const RoundRanked = {
+    type: Schema.Types.Int32,
+    min: 1,
+    max: 50,
+};
+
 export const SeasonId = {
     type: Schema.Types.Int32,
     min: 1,
@@ -77,6 +83,23 @@ export const Tower = {
     ],
 };
 
+export const MatchResultCodes = {
+    type: Number,
+};
+
+export const TowerCodes = {
+    type: Schema.Types.Int32,
+    min: 102,
+    max: 26212019,
+};
+
+export const UserId = {
+    type: String,
+    validator: (str: string) => {
+        return /^[a-z0-9]*$/i.test(str);
+    },
+};
+
 export const Required = {
     String: { type: String, required: true },
     Number: { type: Number, required: true },
@@ -100,6 +123,9 @@ export const Required = {
     MapName: { type: MapName, required: true },
     Result: { type: Result, required: true },
     Round: { type: Round, required: true },
+    RoundRanked: { type: RoundRanked, required: true },
     SeasonId: { type: SeasonId, required: true },
     Tower: { type: Tower, required: true },
+    TowerCodes: { type: TowerCodes, required: true },
+    UserId: { type: UserId, required: true },
 };

@@ -13,8 +13,7 @@ export interface MatchPlayer {
 export interface Match {
     id: string;
     gametype: string;
-    map?: string;
-    mapName?: string;
+    map: string;
     duration: number;
     endRound: number;
     mapURL?: string;
@@ -22,10 +21,18 @@ export interface Match {
     playerRight: MatchPlayer;
 }
 
-export interface MatchDocument extends Match {
+export interface MatchPlayerDocument {
+    i: string;
+    t: number;
+}
+
+export interface MatchDocument {
     _id?: string;
-    timeStamp: Date;
-    seasonId: number;
+    t: number;
+    i: string;
+    d: number;
+    pl: MatchPlayerDocument;
+    pr: MatchPlayerDocument;
 }
 
 export interface CachedMatches {

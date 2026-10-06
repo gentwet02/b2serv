@@ -1,1 +1,2 @@
-export { matchesHistory as default } from './matchesHistory';
+export { info } from './info';
+export { matchesHistory } from './matchesHistory';
