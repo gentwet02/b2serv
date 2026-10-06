@@ -1,132 +1,138 @@
-import { NK_API } from '@/config/constants';
-import { delay, extractUserId, fetchWithRetry } from '@/utils/helpers';
+import {
+    NK_API,
+    MAX_SEASON_PAGES,
+    MAX_LEADERBOARD_PAGES,
+    PLAYER_FETCH_CONCURRENCY,
+} from '@/config/constants';
+import { extractUserId, fetchWithRetry } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 import type { LeaderboardPlayer, LeadrboardResponse } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
 import type { PlayerMatchesResponse } from '@/types/player';
 import type { Season, SeasonsResponse } from '@/types/season';
 
+function nextPageUrl(next: unknown): string | null {
+    return typeof next === 'string' && next.length > 0 ? next : null;
+}
+
 export async function fetchSeasons(): Promise<Season[]> {
     logger.debug('Fetching seasons list...');
+    const seasons: Season[] = [];
+    let url: string | null = NK_API.SEASONS;
+    let page = 0;
 
-    const url = NK_API.SEASONS;
-    const data: SeasonsResponse = await fetchWithRetry(url);
+    while (url && page < MAX_SEASON_PAGES) {
+        page++;
+        const data: SeasonsResponse | null = await fetchWithRetry(url);
 
-    if (data.error) {
-        logger.error(`Error while fetching seasons list: ${data.error}`);
+        if (!data) {
+            logger.error(`No response for seasons page ${page}`);
+            break;
+        }
+        if (!data.success || data.error) {
+            logger.error(`Seasons page ${page} failed: ${data.error ?? 'unsuccessful'}`);
+            break;
+        }
+
+        seasons.push(...(data.body ?? []));
+        url = nextPageUrl(data.next);
+
+        if (data.next && !url) {
+            logger.error(
+                `Unrecognised "next" format on seasons page ${page}: ${JSON.stringify(data.next)}`,
+            );
+        }
     }
 
-    if (!data.success) {
-        logger.error('Fetch of seasons list was not successful');
-    }
-
-    logger.debug(`Total seasons found: ${data?.body?.length || 0}`);
-
-    // todo: maybe one day there will be more than one page if that matters ...
-
-    return data.body || [];
+    logger.debug(`Total seasons found: ${seasons.length} (${page} page(s))`);
+    return seasons;
 }
 
-export async function fetchLiveSeason(seasons: Season[]): Promise<Season> {
-    return seasons.filter((season) => season.live)[0] || seasons[0];
-}
+async function fetchLeaderboardPage(
+    seasonId: number,
+    pageNb = 1,
+): Promise<LeadrboardResponse | null> {
+    const label = `season ${seasonId} leaderboard page ${pageNb}`;
+    const data: LeadrboardResponse | null = await fetchWithRetry(
+        NK_API.LEADERBOARD(seasonId, pageNb),
+    );
 
-async function fetchLeaderboardPage(seasonId: number, pageNb = 1): Promise<LeadrboardResponse> {
-    const lbPage = `leaderboard page ${pageNb}`;
-    logger.debug(`Fetching ${lbPage}...`);
-
-    const url = NK_API.LEADERBOARD(seasonId, pageNb);
-    const data: LeadrboardResponse = await fetchWithRetry(url);
-
-    if (data.error) {
-        logger.error(`Error while fetching ${lbPage}: ${data.error}`);
+    if (!data) {
+        logger.error(`No response for ${label}`);
+        return null;
+    }
+    if (!data.success || data.error) {
+        logger.error(`Fetch of ${label} failed: ${data.error ?? 'unsuccessful'}`);
+        return null;
     }
 
-    if (!data.success) {
-        logger.error(`Fetch of ${lbPage} was not successful`);
-    }
-
-    logger.debug(`Got ${data?.body?.length || 0} players from ${lbPage}`);
-
+    logger.debug(`Got ${data.body?.length ?? 0} players from ${label}`);
     return data;
 }
 
 export async function fetchLeaderboard(seasonId: number): Promise<LeaderboardPlayer[]> {
     logger.debug(`Fetching leaderboard for season ${seasonId}...`);
     const players: LeaderboardPlayer[] = [];
-    let pageNb = 1;
-    let hasMorePages = true;
 
-    while (hasMorePages) {
+    for (let pageNb = 1; pageNb <= MAX_LEADERBOARD_PAGES; pageNb++) {
         const pageData = await fetchLeaderboardPage(seasonId, pageNb);
+        if (!pageData) break;
 
-        if (!pageData) {
-            logger.error(`Could not fetch leaderboard page ${pageNb}, stopping...`);
-            break;
-        }
-
-        if (pageData?.body?.length > 0) {
-            players.push(...pageData.body);
-        }
-
-        if (pageData.next) {
-            pageNb += 1;
-        } else {
-            hasMorePages = false;
-        }
+        players.push(...(pageData.body ?? []));
+        if (!pageData.next) break;
     }
 
-    logger.debug(`Total players found: ${players.length}`);
+    logger.debug(`Season ${seasonId}: ${players.length} players found`);
     return players;
 }
 
 async function fetchPlayerMatches(userId: string): Promise<Match[]> {
-    const mUser = `matches for user ${userId}`;
-    logger.debug(`Fetching ${mUser}...`);
-    const url = NK_API.PLAYER_MATCHES(userId);
-    const data: PlayerMatchesResponse = await fetchWithRetry(url);
+    const data: PlayerMatchesResponse | null = await fetchWithRetry(NK_API.PLAYER_MATCHES(userId));
 
-    if (data.error) {
-        logger.error(`Error while fetching ${mUser}: ${data.error}`);
+    if (!data) {
+        logger.error(`No response for matches of user ${userId}`);
+        return [];
+    }
+    if (!data.success || data.error) {
+        logger.error(`Fetch of matches for user ${userId} failed: ${data.error ?? 'unsuccessful'}`);
+        return [];
     }
 
-    if (!data.success) {
-        logger.error(`Fetch ${mUser} was not successful`);
-    }
-
-    logger.debug(`Got ${data?.body?.length || 0} matches for user ${userId}`);
-
-    return data.body || [];
+    return data.body ?? [];
 }
 
-function addUniqueMatches(playerMatches: Match[], allMatches: Match[], seenMatchIds: Set<string>) {
-    playerMatches.forEach((match: Match) => {
-        if (!seenMatchIds.has(match.id)) {
-            seenMatchIds.add(match.id);
-            allMatches.push(match);
+async function forEachWithConcurrency<T>(
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<void>,
+) {
+    let index = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (index < items.length) {
+            const item = items[index++];
+            await fn(item);
         }
     });
+    await Promise.all(workers);
 }
 
-async function processPlayerMatches(
-    player: LeaderboardPlayer,
-    matches: Match[],
-    seenIds: Set<string>
-) {
-    delay(50);
-    const userId = extractUserId(player.profile);
-    const playerMatches = await fetchPlayerMatches(userId);
-    addUniqueMatches(playerMatches, matches, seenIds);
-}
+export async function processPlayersMatches(players: LeaderboardPlayer[]): Promise<Match[]> {
+    const matches = new Map<string, Match>();
+    let done = 0;
 
-export async function processPlayersMatches(players: LeaderboardPlayer[]) {
-    const matches: Match[] = [];
-    const seenIds = new Set<string>();
+    await forEachWithConcurrency(players, PLAYER_FETCH_CONCURRENCY, async (player) => {
+        const playerMatches = await fetchPlayerMatches(extractUserId(player.profile));
+        for (const match of playerMatches) {
+            if (!matches.has(match.id)) matches.set(match.id, match);
+        }
 
-    const matchPromises = players.map(async (player: LeaderboardPlayer) => {
-        await processPlayerMatches(player, matches, seenIds);
+        done++;
+        if (done % 100 === 0 || done === players.length) {
+            logger.debug(
+                `Player matches: ${done}/${players.length} players, ${matches.size} unique matches`,
+            );
+        }
     });
 
-    await Promise.all(matchPromises);
-    return matches;
+    return [...matches.values()];
 }

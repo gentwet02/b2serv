@@ -1,71 +1,52 @@
-import { env } from '@/config/environment';
-import { getLiveSeason } from '@/index';
-import { setCachedMatches } from '@/services/matchesHistory';
-import type { CachedMatches } from '@/types/match';
-import type { Season } from '@/types/season';
-import { logger } from '@/utils/logger';
 import { Hono } from 'hono';
+import { env } from '@/config/environment';
+import { matchesState, refreshMatchesHistory } from '@/services/matchesHistory';
+import { scheduleEvery } from '@/utils/scheduler';
 
 export const matchesHistory = new Hono();
 
-let cachedMatches: CachedMatches | null = null;
-let isCurrentlyFetching = false;
-let liveSeason: Season | null = null;
-
-async function setCache() {
-    const [isFetching, cache] = await setCachedMatches(
-        liveSeason,
-        isCurrentlyFetching,
-        cachedMatches
-    );
-    isCurrentlyFetching = isFetching;
-    cachedMatches = cache;
-}
-
-matchesHistory.get('/', async (c) => {
-    liveSeason = getLiveSeason();
+matchesHistory.get('/', (c) => {
+    const cache = matchesState.cache;
     return c.json({
-        matches: cachedMatches,
-        error: cachedMatches
-            ? null
-            : 'No data available yet. Data is being fetched in the background.',
-        message: cachedMatches ? null : 'Please try again in a few minutes.',
+        matches: cache,
+        error: cache ? null : 'No data available yet. Data is being fetched in the background.',
+        message: cache ? null : 'Please try again in a few minutes.',
     });
 });
 
 matchesHistory.get('/status', (c) => {
+    const lastUpdated = matchesState.cache?.lastUpdated ?? null;
     return c.json({
         message: 'running',
-        hasCache: !!cachedMatches,
-        isFetching: isCurrentlyFetching,
-        lastUpdated: cachedMatches?.lastUpdated?.toISOString() || null,
-        nextUpdateIn: cachedMatches
-            ? Math.max(
-                  0,
-                  env.NK_FETCH_INTERVAL - (Date.now() - cachedMatches?.lastUpdated?.getTime() || 0)
-              )
+        hasCache: !!matchesState.cache,
+        isFetching: matchesState.isFetching,
+        totalMatches: matchesState.cache?.totalMatches ?? 0,
+        seasonId: matchesState.cache?.seasonID ?? null,
+        lastUpdated: lastUpdated?.toISOString() ?? null,
+        lastRunStartedAt: matchesState.lastRunStartedAt?.toISOString() ?? null,
+        lastRunEndedAt: matchesState.lastRunEndedAt?.toISOString() ?? null,
+        lastError: matchesState.lastError,
+        lastSave: matchesState.lastSave,
+        nextUpdateIn: lastUpdated
+            ? Math.max(0, env.NK_FETCH_INTERVAL - (Date.now() - lastUpdated.getTime()))
             : 'unknown',
         timestamp: new Date().toISOString(),
     });
 });
 
-matchesHistory.get('/force-update', async (c) => {
-    if (isCurrentlyFetching) {
+matchesHistory.get('/force-update', (c) => {
+    if (matchesState.isFetching) {
         return c.json({ message: 'Update already in progress' });
     }
-    await setCache();
-    return c.json({ message: 'Force update triggered. Check /status for progress.' });
+    // not awaited: a run takes minutes, the answer comes right away
+    void refreshMatchesHistory();
+    return c.json(
+        { message: 'Force update triggered. Check /matches-history/status for progress.' },
+        202,
+    );
 });
 
-async function onServerStart() {
-    logger.debug('Server starting...');
-
-    logger.debug('Performing initial data fetch...');
-    await setCache();
-    setInterval(setCache, env.NK_FETCH_INTERVAL);
-    logger.debug(`Scheduled updates every ${env.NK_FETCH_INTERVAL / 1000} seconds`);
-
-    logger.debug('Server ready!');
+export async function startMatchesScheduler() {
+    await refreshMatchesHistory();
+    scheduleEvery('matches-history', refreshMatchesHistory, env.NK_FETCH_INTERVAL);
 }
-
-onServerStart().catch(console.error);

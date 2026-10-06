@@ -22,3 +22,7 @@ export const COLLECTIONS = {
     PLAYERS: 'players',
     LEADERBOARDS: 'leaderboards',
 } as const;
+
+export const MAX_SEASON_PAGES = 1;
+export const MAX_LEADERBOARD_PAGES = 20;
+export const PLAYER_FETCH_CONCURRENCY = 1;

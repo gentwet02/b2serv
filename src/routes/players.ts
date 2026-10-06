@@ -1,25 +1,9 @@
 import { Hono } from 'hono';
+import { playerNames } from '@/data/playerNames';
 
 export const players = new Hono();
 
-let cachedPlayers: { [key: string]: string } = {
-    '9cea16dd8b9ef8a71b42da4d5d27e7709f5719ea9f14dc3b': 'Bollator',
-    '9cea12dadb91fef71a45dc1f5c7be77fca5714b4cc15d16d': 'GamePlayZ',
-    '9fba1e83d893aca34d4788420b7ab474995649ba9a42d93a': 'Harris',
-    '9fbd46dede92f0f04c4bdb1f5e72e271c4524cbf9b14df39': 'Juno',
-    '9fb9458d8d97f9ac4b168e490922e7759d0d14b998108a3d': 'Kingvon',
-    '9fb91fdd8a93faf31e4ad94c5c74e325ca0c4fe9cd428e3e': 'Lazer',
-    '9fbe468cdd93abf44e40de4e5b72e273995549bb9b42d16a': 'LMS',
-    '9ce9448bdbc5adad1d10db435b73e77f9a511ab99d18da3e': 'Lydia',
-    '9fbe10838cc2ffa71b10da4b5e7ae7249d0d15efc819db3f': 'Mawo',
-    '9cb841ded796faac4b16de4d5870b425ce0d18bd9b13dd3a': 'Minus',
-    '9fbd41dfd6c3ada411428f185773b022990114b89841d169': 'Necromancer',
-    '9cb617dedac0fba01841874c0c76e723cc554cb89e11dc3a': 'NVG',
-    '9cb8458cd790fdf31b41de4d5b26e177cc5049bb9d13dd6b': 'Player',
-    '9fbf438edcc4fcf64a42da4b5a71e77e990148b498428a31': 'Ryan Mehalic',
-    '9fbe1588d8c7f9f14e41d9425c26e024c4004ebb9915893b': 'SweetyMonkey',
-    '9fbe4683dfc2fff34b138b435b7be27f9a504cb8cd198d3f': 'Yeetboy',
-};
+let cachedPlayers: { [key: string]: string } = playerNames;
 
 players.get('/:id?', async (c) => {
     const id = c.req.param('id');

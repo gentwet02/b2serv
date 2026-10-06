@@ -4,5 +4,6 @@ export interface Environment {
     MONGODB_URI: string;
     NK_FETCH_INTERVAL: number;
     NK_FETCH_RETRIES: number;
+    NK_REQUESTS_PER_SECOND: number;
     CLIENT_URL: string;
 }

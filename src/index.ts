@@ -2,48 +2,27 @@ import { Hono } from 'hono';
 import CORS from '@/middleware/cors';
 import connectDB from '@/services/database';
 import router from '@/router';
-import { Season } from './types/season';
-import { contextStorage, getContext } from 'hono/context-storage';
-import { fetchSeasons, fetchLiveSeason } from './services/ninjakiwi';
-import { logger } from './utils/logger';
+import { startSeasonsScheduler } from '@/services/seasons';
+import { startLeaderboardScheduler } from '@/services/leaderboard';
+import { startMatchesScheduler } from '@/routes/matchesHistory';
+import { logger } from '@/utils/logger';
 
-interface Env {
-    Variables: { seasons: Season[]; liveSeason: Season };
-}
-
-const app = new Hono<Env>();
+const app = new Hono();
 
 app.use('*', CORS);
-
-connectDB();
-
-app.use(contextStorage());
-
-app.use(async (c, next) => {
-    try {
-        const seasons = await fetchSeasons();
-        const liveSeason = await fetchLiveSeason(seasons);
-
-        c.set('seasons', seasons);
-        c.set('liveSeason', liveSeason);
-
-        await next();
-    } catch (error) {
-        logger.error(`Failed to fetch seasons: ${error}`);
-        await next();
-    }
-});
 
 for (const [path, handler] of Object.entries(router)) {
     app.route(path, handler);
 }
 
-export function getSeasons() {
-    return getContext<Env>().var.seasons;
-}
+await connectDB();
+await startSeasonsScheduler();
 
-export function getLiveSeason() {
-    return getContext<Env>().var.liveSeason;
-}
+(async () => {
+    await startLeaderboardScheduler();
+    await startMatchesScheduler();
+})().catch((e) => logger.error(`Background startup failed: ${e}`));
+
+logger.debug('Server ready!');
 
 export default app;

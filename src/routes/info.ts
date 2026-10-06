@@ -1,15 +1,22 @@
 import { Hono } from 'hono';
-import { extractSeasonId } from '@/utils/helpers';
-import { getLiveSeason } from '..';
+import { getLiveSeason, getSeasons, getSeasonsLastFetch } from '@/services/seasons';
 
 export const info = new Hono();
 
 info.get('/', (c) => {
     const season = getLiveSeason();
+
+    if (!season) {
+        return c.json({ message: 'waiting for api response...', error: '425' });
+    }
+
     return c.json({
-        message: season ? 'running' : 'waiting for api response...',
-        error: season ? '200' : '425',
-        liveSeason: extractSeasonId(season.name),
+        message: 'running',
+        error: '200',
+        liveSeason: season.seasonId,
+        liveSeasonName: season.name,
         totalScores: season.totalScores,
+        seasons: getSeasons().map((s) => ({ id: s.seasonId, name: s.name, live: s.live })),
+        lastFetch: getSeasonsLastFetch()?.toISOString() ?? null,
     });
 });

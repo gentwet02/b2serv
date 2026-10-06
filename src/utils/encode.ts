@@ -59,6 +59,7 @@ const heroMap: string[] = [
 ];
 
 const mapMap: string[] = [
+    'club_jammin',
     'thin_ice',
     'neo_highway',
     'star',
@@ -98,6 +99,13 @@ const mapMap: string[] = [
     'salmon_ladder',
     'skull_party',
     'bot_factory',
+    'lava_canyon',
+    'cobra_command_reversed',
+    'glade_reversed',
+    'oasis_reversed',
+    'inflection_reversed',
+    'offtide_reversed',
+    'park',
 ];
 
 const resultMap: string[] = ['cancelled', 'draw', 'lobbyDC', 'lose', 'opponentLobbyDC', 'win'];
@@ -125,7 +133,7 @@ function encodeMatchResult(match: Match) {
                 .toString()
                 .padStart(2, '0') +
             match.endRound.toString().padStart(2, '0') +
-            match.duration.toString().padStart(4, '0')
+            match.duration.toString().padStart(4, '0'),
     );
 }
 
@@ -146,7 +154,7 @@ function encodeTowers(player: MatchPlayer) {
             towerMap
                 .findIndex((e: string) => e === player.towerthree)
                 .toString()
-                .padStart(2, '0')
+                .padStart(2, '0'),
     );
 }
 

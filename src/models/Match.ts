@@ -1,12 +1,12 @@
 import { Schema } from 'mongoose';
-import { MatchResultCodes, SeasonId, TowerCodes, UserId } from '@/validators';
+import { MatchResultCodes, TowerCodes, UserId } from '@/validators';
 
 const matchPlayerSchema = new Schema(
     {
         t: TowerCodes,
         i: UserId,
     },
-    { _id: false }
+    { _id: false },
 );
 
 export const matchSchema = new Schema(
@@ -17,5 +17,10 @@ export const matchSchema = new Schema(
         pl: matchPlayerSchema,
         pr: matchPlayerSchema,
     },
-    { versionKey: false }
+    { versionKey: false },
 );
+
+matchSchema.index({ i: 1 }, { unique: true });
+matchSchema.index({ 'pl.i': 1 });
+matchSchema.index({ 'pr.i': 1 });
+matchSchema.index({ t: -1 });
