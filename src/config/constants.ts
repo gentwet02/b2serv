@@ -25,4 +25,8 @@ export const COLLECTIONS = {
 
 export const MAX_SEASON_PAGES = 1;
 export const MAX_LEADERBOARD_PAGES = 20;
-export const PLAYER_FETCH_CONCURRENCY = 1;
+/**
+ * Requests the match crawler keeps in flight. The rate limiter still caps requests per second;
+ * this only lets the wait for one answer overlap with the next request.
+ */
+export const PLAYER_FETCH_CONCURRENCY = 4;

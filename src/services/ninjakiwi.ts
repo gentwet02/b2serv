@@ -4,7 +4,7 @@ import {
     MAX_LEADERBOARD_PAGES,
     PLAYER_FETCH_CONCURRENCY,
 } from '@/config/constants';
-import { extractUserId, fetchWithRetry } from '@/utils/helpers';
+import { extractUserId, fetchWithRetry, type Priority } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 import type { LeaderboardPlayer, LeadrboardResponse } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
@@ -50,11 +50,13 @@ export async function fetchSeasons(): Promise<Season[]> {
 
 async function fetchLeaderboardPage(
     seasonId: number,
-    pageNb = 1,
+    pageNb: number,
+    priority: Priority,
 ): Promise<LeadrboardResponse | null> {
     const label = `season ${seasonId} leaderboard page ${pageNb}`;
     const data: LeadrboardResponse | null = await fetchWithRetry(
         NK_API.LEADERBOARD(seasonId, pageNb),
+        { priority },
     );
 
     if (!data) {
@@ -66,28 +68,55 @@ async function fetchLeaderboardPage(
         return null;
     }
 
-    logger.debug(`Got ${data.body?.length ?? 0} players from ${label}`);
     return data;
 }
 
-export async function fetchLeaderboard(seasonId: number): Promise<LeaderboardPlayer[]> {
-    logger.debug(`Fetching leaderboard for season ${seasonId}...`);
-    const players: LeaderboardPlayer[] = [];
+/**
+ * Page 1 tells how many pages there are (maxPages); the others are then requested together.
+ * The rate limiter still spaces them out, but their response times now overlap
+ * instead of adding up one after another.
+ */
+export async function fetchLeaderboard(
+    seasonId: number,
+    priority: Priority = 'low',
+): Promise<LeaderboardPlayer[]> {
+    const started = Date.now();
+    const first = await fetchLeaderboardPage(seasonId, 1, priority);
+    if (!first) return [];
 
-    for (let pageNb = 1; pageNb <= MAX_LEADERBOARD_PAGES; pageNb++) {
-        const pageData = await fetchLeaderboardPage(seasonId, pageNb);
-        if (!pageData) break;
+    const players: LeaderboardPlayer[] = [...(first.body ?? [])];
+    const maxPages = Math.min(Number(first.maxPages) || 0, MAX_LEADERBOARD_PAGES);
 
-        players.push(...(pageData.body ?? []));
-        if (!pageData.next) break;
+    if (maxPages > 1) {
+        const pageNumbers = Array.from({ length: maxPages - 1 }, (_, i) => i + 2);
+        const pages = await Promise.all(
+            pageNumbers.map((n) => fetchLeaderboardPage(seasonId, n, priority)),
+        );
+        for (const page of pages) {
+            if (!page) break; // keep the ranking contiguous: stop at the first missing page
+            players.push(...(page.body ?? []));
+        }
+    } else if (first.next) {
+        // no maxPages in the answer: follow "next" one page at a time
+        for (let pageNb = 2; pageNb <= MAX_LEADERBOARD_PAGES; pageNb++) {
+            const page = await fetchLeaderboardPage(seasonId, pageNb, priority);
+            if (!page) break;
+            players.push(...(page.body ?? []));
+            if (!page.next) break;
+        }
     }
 
-    logger.debug(`Season ${seasonId}: ${players.length} players found`);
+    logger.debug(
+        `Season ${seasonId}: ${players.length} players in ${((Date.now() - started) / 1000).toFixed(1)}s (${priority})`,
+    );
     return players;
 }
 
 async function fetchPlayerMatches(userId: string): Promise<Match[]> {
-    const data: PlayerMatchesResponse | null = await fetchWithRetry(NK_API.PLAYER_MATCHES(userId));
+    const data: PlayerMatchesResponse | null = await fetchWithRetry(NK_API.PLAYER_MATCHES(userId), {
+        priority: 'low',
+        retries: 3,
+    });
 
     if (!data) {
         logger.error(`No response for matches of user ${userId}`);
@@ -116,17 +145,37 @@ async function forEachWithConcurrency<T>(
     await Promise.all(workers);
 }
 
-export async function processPlayersMatches(players: LeaderboardPlayer[]): Promise<Match[]> {
+export interface CrawlProgress {
+    done: number;
+    total: number;
+}
+
+/**
+ * Collects the unique matches of every player.
+ * `onProgress` is called every few players with the matches found so far,
+ * so the first results can be served long before the crawl ends.
+ */
+export async function processPlayersMatches(
+    players: LeaderboardPlayer[],
+    onProgress?: (matches: Map<string, Match>, progress: CrawlProgress) => void,
+    filter: (match: Match) => boolean = () => true,
+): Promise<Match[]> {
     const matches = new Map<string, Match>();
     let done = 0;
+    let lastReport = 0;
 
     await forEachWithConcurrency(players, PLAYER_FETCH_CONCURRENCY, async (player) => {
         const playerMatches = await fetchPlayerMatches(extractUserId(player.profile));
         for (const match of playerMatches) {
-            if (!matches.has(match.id)) matches.set(match.id, match);
+            if (filter(match) && !matches.has(match.id)) matches.set(match.id, match);
         }
 
         done++;
+        const now = Date.now();
+        if (done === players.length || done % 25 === 0 || now - lastReport > 10_000) {
+            lastReport = now;
+            onProgress?.(matches, { done, total: players.length });
+        }
         if (done % 100 === 0 || done === players.length) {
             logger.debug(
                 `Player matches: ${done}/${players.length} players, ${matches.size} unique matches`,

@@ -1,52 +1,194 @@
-import { Hono } from 'hono';
-import { env } from '@/config/environment';
-import { matchesState, refreshMatchesHistory } from '@/services/matchesHistory';
+import { Hono, type Context } from 'hono';
+import { crawlState, nextCrawlInMs, refreshMatchesHistory } from '@/services/matchesHistory';
+import {
+    canUseSameSide,
+    countMatches,
+    getFilterOptions,
+    getStorageReport,
+    MATCH_SORTS,
+    MAX_HEROES,
+    MAX_TOWERS,
+    queryMatches,
+    type FacetFilter,
+    type HeroPick,
+    type MatchSort,
+} from '@/services/matchStore';
+import { getLiveSeason, getSeasonById } from '@/services/seasons';
+import { getNkClientStats } from '@/utils/helpers';
+import { logger } from '@/utils/logger';
 import { scheduleEvery } from '@/utils/scheduler';
 
 export const matchesHistory = new Hono();
 
-matchesHistory.get('/', (c) => {
-    const cache = matchesState.cache;
-    return c.json({
-        matches: cache,
-        error: cache ? null : 'No data available yet. Data is being fetched in the background.',
-        message: cache ? null : 'Please try again in a few minutes.',
-    });
+const clampInt = (value: string | undefined, fallback: number, min: number, max: number) => {
+    const n = Number.parseInt(value ?? '', 10);
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+};
+
+const NAME = /^[A-Za-z0-9_]{1,40}$/;
+
+/** "a,b,c" → valid distinct names, at most `max`. */
+const list = (value: string | undefined, max: number) =>
+    [
+        ...new Set(
+            (value ?? '')
+                .split(',')
+                .map((v) => v.trim())
+                .filter((v) => NAME.test(v)),
+        ),
+    ].slice(0, max);
+
+/** "Quincy" = any variant, "Quincy:Quincy_Cyber" = that variant only. */
+function parseHeroes(value: string | undefined): HeroPick[] {
+    const picks: HeroPick[] = [];
+    for (const item of (value ?? '').split(',')) {
+        const [base, hero] = item.trim().split(':');
+        if (!base || !NAME.test(base) || (hero && !NAME.test(hero))) continue;
+        if (picks.some((p) => p.base === base)) continue;
+        picks.push(hero ? { base, hero } : { base });
+        if (picks.length === MAX_HEROES) break;
+    }
+    return picks;
+}
+
+const crawlInfo = () => ({
+    isFetching: crawlState.isFetching,
+    progress: crawlState.isFetching ? crawlState.progress : null,
+    inserted: crawlState.inserted,
+    lastRunEndedAt: crawlState.lastRunEndedAt?.toISOString() ?? null,
 });
 
-matchesHistory.get('/status', (c) => {
-    const lastUpdated = matchesState.cache?.lastUpdated ?? null;
-    return c.json({
-        message: 'running',
-        hasCache: !!matchesState.cache,
-        isFetching: matchesState.isFetching,
-        totalMatches: matchesState.cache?.totalMatches ?? 0,
-        seasonId: matchesState.cache?.seasonID ?? null,
-        lastUpdated: lastUpdated?.toISOString() ?? null,
-        lastRunStartedAt: matchesState.lastRunStartedAt?.toISOString() ?? null,
-        lastRunEndedAt: matchesState.lastRunEndedAt?.toISOString() ?? null,
-        lastError: matchesState.lastError,
-        lastSave: matchesState.lastSave,
-        nextUpdateIn: lastUpdated
-            ? Math.max(0, env.NK_FETCH_INTERVAL - (Date.now() - lastUpdated.getTime()))
-            : 'unknown',
-        timestamp: new Date().toISOString(),
-    });
+function resolveSeason(param: string | undefined) {
+    return param ? getSeasonById(Number(param)) : getLiveSeason();
+}
+
+/** Query params → filter, shared by the match list and the filter options. */
+function parseFilter(c: Context, seasonId: number): FacetFilter {
+    const playerId = c.req.query('playerId');
+    return {
+        seasonId,
+        player: c.req.query('player')?.trim().slice(0, 40) || undefined,
+        playerId: playerId && /^[a-z0-9]{8,64}$/i.test(playerId) ? playerId : undefined,
+        heroes: parseHeroes(c.req.query('heroes')),
+        towers: list(c.req.query('towers'), MAX_TOWERS),
+        map: c.req.query('map')?.replace(/[^a-z0-9]/g, '') || undefined,
+        sameSide: c.req.query('sameSide') === '1',
+    };
+}
+
+/**
+ * GET /matches-history
+ *   ?season=46                     default: live season
+ *   &sort=newest                   newest | oldest | longest | shortest | rounds
+ *   &player=lazer                  part of an in-game or real name
+ *   &playerId=<id>                 one player's matches (profiles)
+ *   &heroes=Quincy,Adora:Adora_Fateweaver   up to 2; "Base" = any variant
+ *   &towers=Druid,DartMonkey       up to 6, all of them in the match
+ *   &map=thinice                   a map key from /filters
+ *   &sameSide=1                    player, hero and towers on the same side
+ *   &offset=0&limit=20
+ */
+matchesHistory.get('/', async (c) => {
+    const seasonParam = c.req.query('season');
+    const season = resolveSeason(seasonParam);
+    if (!season) {
+        const message = seasonParam
+            ? `Unknown season id: ${seasonParam}`
+            : 'Live season not available yet';
+        return c.json({ message, error: message }, seasonParam ? 404 : 503);
+    }
+
+    const sort = c.req.query('sort') ?? '';
+    const filter = {
+        ...parseFilter(c, season.seasonId),
+        offset: clampInt(c.req.query('offset'), 0, 0, 100_000),
+        limit: clampInt(c.req.query('limit'), 20, 1, 50),
+        sort: (MATCH_SORTS as readonly string[]).includes(sort) ? (sort as MatchSort) : 'newest',
+    };
+
+    try {
+        const [{ total, items }, totalMatches] = await Promise.all([
+            queryMatches(filter),
+            countMatches(season.seasonId),
+        ]);
+        return c.json({
+            matches: {
+                seasonId: season.seasonId,
+                totalMatches,
+                total,
+                offset: filter.offset,
+                limit: filter.limit,
+                sort: filter.sort,
+                sameSideApplied: filter.sameSide && canUseSameSide(filter),
+                items,
+            },
+            crawl: season.live ? crawlInfo() : null,
+            message: null,
+            error: null,
+        });
+    } catch (error) {
+        logger.error(`Match query failed: ${error}`);
+        const message = 'Could not read the stored matches.';
+        return c.json({ message, error: message }, 500);
+    }
 });
+
+/**
+ * Heroes (with variants), towers and maps, counted within the other selected filters:
+ * same query params as the list. Only combinations that exist are returned.
+ */
+matchesHistory.get('/filters', async (c) => {
+    const season = resolveSeason(c.req.query('season'));
+    if (!season) {
+        const message = 'Unknown season';
+        return c.json({ message, error: message }, 404);
+    }
+    try {
+        const options = await getFilterOptions(parseFilter(c, season.seasonId));
+        return c.json({
+            seasonId: season.seasonId,
+            ...options,
+            sorts: MATCH_SORTS,
+            maxHeroes: MAX_HEROES,
+            maxTowers: MAX_TOWERS,
+        });
+    } catch (error) {
+        logger.error(`Filter options failed: ${error}`);
+        const message = 'Could not read the filter options.';
+        return c.json({ message, error: message }, 500);
+    }
+});
+
+matchesHistory.get('/status', async (c) =>
+    c.json({
+        message: 'running',
+        ...crawlInfo(),
+        seasonId: crawlState.seasonId,
+        found: crawlState.found,
+        rejected: crawlState.rejected,
+        lastRunStartedAt: crawlState.lastRunStartedAt?.toISOString() ?? null,
+        lastError: crawlState.lastError,
+        nextUpdateIn: nextCrawlInMs() ?? 'running',
+        nk: getNkClientStats(),
+        storage: await getStorageReport(),
+        timestamp: new Date().toISOString(),
+    }),
+);
 
 matchesHistory.get('/force-update', (c) => {
-    if (matchesState.isFetching) {
-        return c.json({ message: 'Update already in progress' });
-    }
-    // not awaited: a run takes minutes, the answer comes right away
+    if (crawlState.isFetching) return c.json({ message: 'Update already in progress' });
     void refreshMatchesHistory();
-    return c.json(
-        { message: 'Force update triggered. Check /matches-history/status for progress.' },
-        202,
-    );
+    return c.json({ message: 'Crawl started. Check /matches-history/status for progress.' }, 202);
 });
 
 export async function startMatchesScheduler() {
-    await refreshMatchesHistory();
-    scheduleEvery('matches-history', refreshMatchesHistory, env.NK_FETCH_INTERVAL);
+    void refreshMatchesHistory();
+    // a crawl starts NK_MATCHES_INTERVAL after the previous one ENDED
+    scheduleEvery(
+        'matches-history',
+        async () => {
+            if (nextCrawlInMs() === 0) await refreshMatchesHistory();
+        },
+        60_000,
+    );
 }
