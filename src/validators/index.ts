@@ -1,3 +1,5 @@
+import { GAME_RESULT, GAME_TYPE } from '@/data/match';
+import { TOWERS } from '@/data/towers';
 import { Schema } from 'mongoose';
 
 export const ApiAssetUrl = {
@@ -16,7 +18,7 @@ export const ApiDataUrl = {
 
 export const GameType = {
     type: String,
-    enum: ['Casual', 'Event', 'GuildWar', 'Ranked'],
+    enum: GAME_TYPE,
 };
 
 export const Hero = {
@@ -35,7 +37,7 @@ export const MapName = {
 
 export const Result = {
     type: String,
-    enum: ['cancelled', 'draw', 'lobbyDC', 'lose', 'opponentLobbyDC', 'win'],
+    enum: GAME_RESULT,
 };
 
 export const Round = {
@@ -57,30 +59,7 @@ export const SeasonId = {
 
 export const Tower = {
     type: String,
-    enum: [
-        'Alchemist',
-        'BananaFarm',
-        'BombShooter',
-        'BoomerangMonkey',
-        'DartlingGunner',
-        'DartMonkey',
-        'Druid',
-        'EngineerMonkey',
-        'GlueGunner',
-        'HeliPilot',
-        'IceMonkey',
-        'MonkeyAce',
-        'MonkeyBuccaneer',
-        'MonkeySub',
-        'MonkeyVillage',
-        'MortarMonkey',
-        'NinjaMonkey',
-        'SniperMonkey',
-        'SpikeFactory',
-        'SuperMonkey',
-        'TackShooter',
-        'WizardMonkey',
-    ],
+    enum: TOWERS,
 };
 
 export const MatchResultCodes = {
