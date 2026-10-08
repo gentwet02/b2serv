@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
 import CORS from '@/middleware/cors';
-import connectDB from '@/services/database';
 import router from '@/router';
-import { startSeasonsScheduler } from '@/services/seasons';
+import connectDB from '@/services/database';
 import { startLeaderboardScheduler } from '@/services/leaderboard';
 import { startMatchesScheduler } from '@/routes/matchesHistory';
+import { listStoredAssetUrls } from '@/services/profileCache';
+import { startSeasonsScheduler } from '@/services/seasons';
 import { logger } from '@/utils/logger';
+import { learnAssetUrl } from '@/utils/assets';
 
 const app = new Hono();
 
@@ -16,6 +18,7 @@ for (const [path, handler] of Object.entries(router)) {
 }
 
 await connectDB();
+void listStoredAssetUrls().then((urls) => urls.forEach(learnAssetUrl));
 await startSeasonsScheduler();
 
 (async () => {

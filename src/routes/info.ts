@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { getLiveSeason, getSeasons, getSeasonsLastFetch } from '@/services/seasons';
+import { getAssetReport } from '@/utils/assets';
 
 export const info = new Hono();
 
@@ -20,3 +21,5 @@ info.get('/', (c) => {
         lastFetch: getSeasonsLastFetch()?.toISOString() ?? null,
     });
 });
+
+info.get('/assets', (c) => c.json(getAssetReport()));

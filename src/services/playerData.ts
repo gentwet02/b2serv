@@ -1,6 +1,6 @@
 import { NK_API } from '@/config/constants';
 import { loadStoredProfile, loadStoredProfiles, storeProfile } from '@/services/profileCache';
-import { fixAssetUrl } from '@/utils/assets';
+import { fixAssetUrl, learnProfileAssets } from '@/utils/assets';
 import { fetchWithRetry, type Priority } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 
@@ -46,6 +46,7 @@ function fetchFresh(key: string, url: string, priority: Priority, persistId?: st
             if (!data) return null;
             const entry = { data, fetchedAt: Date.now() };
             if (data.success) {
+                learnProfileAssets(data);
                 remember(key, entry);
                 if (persistId) await storeProfile(persistId, data, new Date(entry.fetchedAt));
             }

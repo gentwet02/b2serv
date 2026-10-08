@@ -83,3 +83,18 @@ export async function loadStoredProfiles(userIds: string[]) {
         return [];
     }
 }
+
+/** Every distinct avatar, banner and border link in the stored profiles. */
+export async function listStoredAssetUrls(): Promise<string[]> {
+    try {
+        const lists = await Promise.all(
+            ['equippedAvatarURL', 'equippedBannerURL', 'equippedBorderURL'].map((field) =>
+                ProfileModel.distinct(`data.body.${field}`),
+            ),
+        );
+        return lists.flat().filter((url): url is string => typeof url === 'string');
+    } catch (error) {
+        logger.error(`Listing stored asset links failed: ${error}`);
+        return [];
+    }
+}
