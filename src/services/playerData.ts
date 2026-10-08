@@ -22,7 +22,8 @@ export interface Entry {
 
 const FRESH_MS = 2 * 60_000;
 const MAX_ENTRIES = 2000;
-
+const avatarAttempts = new Map<string, number>();
+const AVATAR_RETRY_MS = 10 * 60_000;
 const memory = new Map<string, Entry>();
 const inFlight = new Map<string, Promise<Entry | null>>();
 
@@ -109,4 +110,37 @@ export async function getKnownAvatars(ids: string[]): Promise<Record<string, str
         if (url) avatars[doc._id] = url;
     }
     return avatars;
+}
+
+/**
+ * Avatars for the leaderboard rows a visitor is looking at.
+ * Known ones come from memory or MongoDB; for the others a low-priority NK fetch is queued
+ * (once per AVATAR_RETRY_MS per player), and their ids are returned as `pending`.
+ */
+export async function requestAvatars(ids: string[]) {
+    const avatars = await getKnownAvatars(ids);
+    const pending: string[] = [];
+    const now = Date.now();
+
+    for (const id of ids) {
+        if (avatars[id]) continue;
+        const key = `profile:${id}`;
+        if (inFlight.has(key)) {
+            pending.push(id);
+            continue;
+        }
+        if (now - (avatarAttempts.get(id) ?? 0) < AVATAR_RETRY_MS) continue;
+        avatarAttempts.set(id, now);
+        // getKnownAvatars already looked in memory and MongoDB: go straight to NK
+        void fetchFresh(key, NK_API.PLAYER_PROFILE(id), 'low', id);
+        pending.push(id);
+    }
+
+    if (avatarAttempts.size > MAX_ENTRIES) {
+        for (const [id, at] of avatarAttempts) {
+            if (now - at >= AVATAR_RETRY_MS) avatarAttempts.delete(id);
+        }
+    }
+
+    return { avatars, pending };
 }

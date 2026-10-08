@@ -5,12 +5,14 @@ import { players } from './routes/players';
 import { matches } from './routes/matches';
 import { recentHistory } from './routes/recentHistory';
 import { users } from './routes/users';
+import { avatars } from './routes/avatars';
 
 interface Router {
     [path: string]: Hono<Env, Schema, string>;
 }
 
 const router: Router = {
+    '/avatars': avatars,
     '/info': info,
     '/leaderboard': leaderboard,
     '/matches': matches,
