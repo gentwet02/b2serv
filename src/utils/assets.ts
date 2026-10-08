@@ -9,7 +9,7 @@
  */
 
 /** …/<32 hex hash>_<name>[_animated].<ext> */
-const ASSET_FILE = /\/[0-9a-f]{32}_(.+?)(_animated)?\.(png|jpe?g|webp|gif)$/i;
+const ASSET_FILE = /\/[0-9a-f]{32}_(.+?)(_?animated)?\.(png|jpe?g|webp|gif)$/i;
 
 /** name → static link */
 const staticByName = new Map<string, string>();
