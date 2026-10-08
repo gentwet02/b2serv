@@ -1,5 +1,6 @@
 import { NK_API } from '@/config/constants';
 import { loadStoredProfile, loadStoredProfiles, storeProfile } from '@/services/profileCache';
+import { fixAssetUrl } from '@/utils/assets';
 import { fetchWithRetry, type Priority } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 
@@ -101,13 +102,13 @@ export async function getKnownAvatars(ids: string[]): Promise<Record<string, str
         const body = memory.get(`profile:${id}`)?.data.body as
             | { equippedAvatarURL?: string }
             | undefined;
-        if (body?.equippedAvatarURL) avatars[id] = body.equippedAvatarURL;
+        if (body?.equippedAvatarURL) avatars[id] = fixAssetUrl(body.equippedAvatarURL);
         else missing.push(id);
     }
     for (const doc of await loadStoredProfiles(missing)) {
         const url = (doc.data as { body?: { equippedAvatarURL?: string } })?.body
             ?.equippedAvatarURL;
-        if (url) avatars[doc._id] = url;
+        if (url) avatars[doc._id] = fixAssetUrl(url);
     }
     return avatars;
 }

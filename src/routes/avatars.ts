@@ -21,14 +21,7 @@ avatars.get('/', async (c) => {
         ...new Set(
             (c.req.query('ids') ?? '')
                 .split(',')
-                .map((id) =>
-                    id
-                        .trim()
-                        .replace(
-                            'https://static-api.nkstatic.com/appdocs/4/assets/opendata/d7c9cd31c606931c820c46e595a1d54e_look_of_doom_avatar.png',
-                            'https://static-api.nkstatic.com/appdocs/4/assets/opendata/6ed5a24051802fe844e2752b8e2921c8_look_of_doom_avatar_animated.png',
-                        ),
-                )
+                .map((id) => id.trim())
                 .filter((id) => USER_ID.test(id)),
         ),
     ].slice(0, MAX_IDS);

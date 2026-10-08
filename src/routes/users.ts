@@ -4,6 +4,7 @@ import { getSeasonStats } from '@/services/matchStore';
 import { getPlayerData } from '@/services/playerData';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
 import { logger } from '@/utils/logger';
+import { fixProfileAssets } from '@/utils/assets';
 
 /**
  * Player data for the client. The browser never calls Ninja Kiwi itself.
@@ -37,7 +38,8 @@ function proxy(kind: 'profile' | 'matches') {
             return c.json({ message, error: message }, 404);
         }
 
-        return c.json({ ...entry.data, fetchedAt: new Date(entry.fetchedAt).toISOString() });
+        const data = kind === 'profile' ? fixProfileAssets(entry.data) : entry.data;
+        return c.json({ ...data, fetchedAt: new Date(entry.fetchedAt).toISOString() });
     };
 }
 
