@@ -16,7 +16,8 @@ import { getAssetUrl } from '@/services/matchMeta';
 import type { Match, MatchPlayer } from '@/types/match';
 import { extractUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
-import { heroBase, HERO_BASES, mapKey } from '@/utils/matchLabels';
+import { heroBase, mapKey } from '@/utils/matchLabels';
+import { HERO_BASES } from '@/data/towers';
 
 /**
  * Compact match storage: one collection per season, `matches_s<season>`, 6 small numbers per match.
