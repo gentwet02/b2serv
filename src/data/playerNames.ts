@@ -53,6 +53,7 @@ export const playerNames: { [key: string]: string } = {
     '9fb61789d891aaa14a44db4f097bef26cc5018b8ca13dc3e': 'Tomer',
     '9fb9448fd7c4fda71f4186185775b526c9074fbc9b42df30': 'Univers',
     '9cb616ded693f8f04d16894d5920e770cc551fbccf19dd6c': 'Upwn',
+    '9cb817828bc2afac1c438d4c5775b426cc0d1ab9cf118a6d': 'Urhere',
     '9fbe10d98c9ef8a211108d4a5a22e5769a0d1ab99a42d839': 'Vuldora',
     '9fb84382d997aaa71f148e495b71b07ec4014bb89941d038': 'Yapper',
     '9fbe4683dfc2fff34b138b435b7be27f9a504cb8cd198d3f': 'Yeetboy',
