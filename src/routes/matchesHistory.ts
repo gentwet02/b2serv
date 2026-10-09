@@ -1,19 +1,15 @@
 import { Hono, type Context } from 'hono';
+import { MATCH_SORTS, MAX_HEROES, MAX_TOWERS } from '@/config/constants';
 import { crawlState, nextCrawlInMs, refreshMatchesHistory } from '@/services/matchesHistory';
 import {
     canUseSameSide,
     countMatches,
     getFilterOptions,
     getStorageReport,
-    MATCH_SORTS,
-    MAX_HEROES,
-    MAX_TOWERS,
     queryMatches,
-    type FacetFilter,
-    type HeroPick,
-    type MatchSort,
 } from '@/services/matchStore';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
+import type { FacetFilter, HeroPick, MatchSort } from '@/types/match';
 import { getNkClientStats } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 import { scheduleEvery } from '@/utils/scheduler';
@@ -159,6 +155,13 @@ matchesHistory.get('/status', async (c) =>
         seasonId: crawlState.seasonId,
         found: crawlState.found,
         rejected: crawlState.rejected,
+        safety: {
+            pages: crawlState.pages,
+            retriedPlayers: crawlState.retriedPlayers,
+            failedPlayers: crawlState.failedPlayers,
+            truncatedPlayers: crawlState.truncatedPlayers,
+            unsaved: crawlState.unsaved,
+        },
         lastRunStartedAt: crawlState.lastRunStartedAt?.toISOString() ?? null,
         lastError: crawlState.lastError,
         nextUpdateIn: nextCrawlInMs() ?? 'running',

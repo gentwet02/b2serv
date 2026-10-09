@@ -13,7 +13,17 @@ import {
     playerOf,
 } from '@/services/codeBook';
 import { getAssetUrl } from '@/services/matchMeta';
-import type { Match, MatchPlayer } from '@/types/match';
+import type {
+    BuiltQuery,
+    FacetFilter,
+    FilterOptions,
+    HeroPick,
+    Match,
+    MatchesFilter,
+    MatchPlayer,
+    MatchSort,
+    StoredMatchDoc,
+} from '@/types/match';
 import { extractUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 import { heroBase, mapKey } from '@/utils/matchLabels';
@@ -33,16 +43,6 @@ import { HERO_BASES } from '@/data/towers';
  * Only the left player's result is stored; the right one is its opposite/equal.
  * About 73 bytes per match, 3 small indexes.
  */
-
-interface StoredMatchDoc {
-    _id: string | mongoose.mongo.Binary;
-    t: number;
-    a: number;
-    b: number;
-    x: number;
-    y: number;
-    d: number;
-}
 
 const ROUND_BITS = 7;
 const DURATION_BITS = 14;
@@ -262,34 +262,6 @@ export async function toApiMatch(doc: StoredMatchDoc) {
 // Query building (shared by the match list and the filter options)
 // ---------------------------------------------------------------------------
 
-export const MATCH_SORTS = ['newest', 'oldest', 'longest', 'shortest', 'rounds'] as const;
-export type MatchSort = (typeof MATCH_SORTS)[number];
-
-/** A hero filter: any variant of `base`, or exactly `hero`. */
-export interface HeroPick {
-    base: string;
-    hero?: string;
-}
-
-export interface MatchesFilter {
-    seasonId: number;
-    offset: number;
-    limit: number;
-    sort: MatchSort;
-    player?: string; // part of a name (in-game or real)
-    playerId?: string; // exact user id
-    heroes: HeroPick[]; // up to 2
-    towers: string[]; // up to 6
-    map?: string; // map key
-    /** player, hero and towers on the same side (only with ≤ 1 hero and ≤ 3 towers) */
-    sameSide: boolean;
-}
-
-export type FacetFilter = Omit<MatchesFilter, 'offset' | 'limit' | 'sort'>;
-
-export const MAX_HEROES = 2;
-export const MAX_TOWERS = 6;
-
 export function canUseSameSide(filter: Pick<MatchesFilter, 'heroes' | 'towers'>) {
     return filter.heroes.length <= 1 && filter.towers.length <= 3;
 }
@@ -304,12 +276,6 @@ const heroCodesFor = (pick: HeroPick) => {
         : namesOf('hero').filter((name) => heroBase(name, knownHeroBases()) === pick.base);
     return names.map((n) => codeOf('hero', n)).filter((c): c is number => c !== undefined);
 };
-
-interface BuiltQuery {
-    match: Record<string, unknown>;
-    /** with "same player": which side satisfies the side conditions (aggregation expressions) */
-    sideOk: [object, object] | null;
-}
 
 /** Filter → MongoDB match. null when nothing can match (unknown hero, player…). */
 function buildQuery(filter: FacetFilter): BuiltQuery | null {
@@ -391,16 +357,6 @@ function buildQuery(filter: FacetFilter): BuiltQuery | null {
 // ---------------------------------------------------------------------------
 // Filter options, counted with the other selected filters applied (facets)
 // ---------------------------------------------------------------------------
-
-export interface FilterOptions {
-    heroes: {
-        base: string;
-        count: number;
-        variants: { hero: string; count: number; portrait?: string }[];
-    }[];
-    towers: { tower: string; count: number }[];
-    maps: { key: string; map: string; count: number }[];
-}
 
 type Count = { _id: number; n: number };
 
@@ -544,7 +500,7 @@ export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptio
 const SORTS: Record<MatchSort, Record<string, 1 | -1>> = {
     newest: { t: -1, _id: -1 },
     oldest: { t: 1, _id: 1 },
-    longest: { d: -1, t: -1 }, // duration is in the top bits of d
+    longest: { d: -1, t: -1 },
     shortest: { d: 1, t: -1 },
     rounds: { _round: -1, t: -1 },
 };
@@ -640,7 +596,14 @@ export async function countMatches(seasonId: number) {
     return collection(seasonId).estimatedDocumentCount();
 }
 
-/** One player's stored matches, newest first. */
+export async function findStoredIds(ids: string[], seasonId: number): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    const docs = await collection(seasonId)
+        .find({ _id: { $in: ids.map(packId) } }, { projection: { _id: 1 } })
+        .toArray();
+    return new Set(docs.map((doc) => unpackId(doc._id)));
+}
+
 export async function getMatchesOfPlayer(userId: string, seasonId: number) {
     await loadCodeBook();
     const code = playerCodeOf(userId);
