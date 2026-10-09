@@ -3,12 +3,11 @@ import { COLLECTIONS } from '@/config/constants';
 import type { LeaderboardPlayer } from '@/types/leaderboard';
 import { logger } from '@/utils/logger';
 
-/** One document per season, in the `leaderboards` collection. */
+/** One document per season, in the leaderboards collection */
 export interface StoredLeaderboard {
     seasonId: number;
     players: LeaderboardPlayer[];
     updatedAt: Date;
-    /** true once the season is over: its ranking can't change anymore, never refetch it. */
     final: boolean;
 }
 
@@ -58,7 +57,7 @@ export async function storeLeaderboard(entry: StoredLeaderboard): Promise<void> 
     }
 }
 
-/** Season ids already stored as final, to skip them when warming up. */
+/** Season ids already stored as final, to skip them when warming up */
 export async function listFinalSeasonIds(): Promise<Set<number>> {
     try {
         const docs = await LeaderboardModel.find({ final: true }, { seasonId: 1, _id: 0 }).lean();
@@ -69,7 +68,7 @@ export async function listFinalSeasonIds(): Promise<Set<number>> {
     }
 }
 
-/** Every stored season (for the rank history of players). */
+/** Every stored season (for the rank history of players) */
 export async function loadAllStoredLeaderboards(): Promise<StoredLeaderboard[]> {
     try {
         return await LeaderboardModel.find({}, { _id: 0 }).lean<StoredLeaderboard[]>();

@@ -10,8 +10,6 @@ export const leaderboard = new Hono();
 
 /**
  * GET /leaderboard/:id/stats
- * Recorded games of the season ({ userId: [wins, losses, draws] }) and the avatars we
- * already know for the top 100 (from stored profiles, no Ninja Kiwi request).
  */
 leaderboard.get('/:id/stats', async (c) => {
     const param = c.req.param('id');

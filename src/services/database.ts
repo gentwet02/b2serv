@@ -15,14 +15,11 @@ export default async function connectDB() {
         await loadCodeBook();
     } catch (error) {
         logger.error(`Database Connectivity Error: ${error}`);
-        throw error; // no point running without a database
+        throw error;
     }
 }
 
 export const isDbConnected = () => mongoose.connection.readyState === 1;
-
-// Matches live in compact `matches_s<season>` collections (services/matchStore.ts).
-// The old `season<N>` collections are not read anymore and can be dropped.
 
 export async function getAllMatches(seasonId: number) {
     logger.debug(`Fetching all matches of season ${seasonId}...`);

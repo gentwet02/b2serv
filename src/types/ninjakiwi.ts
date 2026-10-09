@@ -6,8 +6,6 @@ export interface NinjaKiwiResponse<T> {
 }
 
 export interface Model {
-    /** The internal name of the model */
     name: string;
-    /** All the different key:value of the model */
     parameters: { [key: string]: string };
 }

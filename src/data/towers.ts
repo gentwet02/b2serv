@@ -1,4 +1,3 @@
-/** Heroes as NK names them without a skin. A skin is "<Hero>_<Skin>" or "<Skin>_<Hero>". */
 export const HERO_BASES = [
     'Adora',
     'Benjamin',

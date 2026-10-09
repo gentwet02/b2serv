@@ -90,12 +90,12 @@ export async function getPlayerData(
     return fetchFresh(key, url, missPriority, persistId);
 }
 
-/** Keeps these profiles fresh in the background (top of the leaderboard). */
+/** Keeps these profiles fresh in the background (top of the leaderboard) */
 export function warmProfiles(ids: string[]) {
     for (const id of ids) void getPlayerData('profile', id, 'low');
 }
 
-/** Avatar URL of each player whose profile we have (memory or MongoDB). No NK request. */
+/** Avatar URL of each player whose profile we have (memory or MongoDB). No NK request */
 export async function getKnownAvatars(ids: string[]): Promise<Record<string, string>> {
     const avatars: Record<string, string> = {};
     const missing: string[] = [];

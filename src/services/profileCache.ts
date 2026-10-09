@@ -11,7 +11,7 @@ import { logger } from '@/utils/logger';
 const PROFILE_TTL_DAYS = 14;
 const UNUSED_FIELDS = ['badges_all', 'badges_equipped', 'chests'];
 interface ProfileDoc {
-    _id: string; // user id
+    _id: string;
     data: unknown;
     fetchedAt: Date;
 }
@@ -70,7 +70,7 @@ export async function storeProfile(userId: string, data: unknown, fetchedAt: Dat
     }
 }
 
-/** Several stored profiles at once (missing ones are left out). */
+/** Several stored profiles at once (missing ones are left out) */
 export async function loadStoredProfiles(userIds: string[]) {
     if (userIds.length === 0) return [];
     try {
@@ -84,7 +84,7 @@ export async function loadStoredProfiles(userIds: string[]) {
     }
 }
 
-/** Every distinct avatar, banner and border link in the stored profiles. */
+/** Every distinct avatar, banner and border link in the stored profiles */
 export async function listStoredAssetUrls(): Promise<string[]> {
     try {
         const lists = await Promise.all(

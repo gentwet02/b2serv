@@ -23,14 +23,14 @@ import { HERO_BASES } from '@/data/towers';
  * Compact match storage: one collection per season, `matches_s<season>`, 6 small numbers per match.
  *
  *   _id  match id (hex ids stored as binary: half the bytes)
- *   t    first seen by the crawler, in minutes since 1970 (NK publishes no play date)
+ *   t    first seen by the crawler
  *   a, b left / right player code            (codeBook player_codes)
  *   x, y left / right loadout   hero(7 bits) | tower(6) | tower(6) | tower(6)
  *   d    match info             result(3)    | map(7)   | round(7) | duration(14)
  *        duration sits in the top bits, so sorting on d sorts by duration
  *
  * Each value is range-checked before packing: nothing can spill into its neighbour.
- * Only the left player's result is stored; the right one is its opposite.
+ * Only the left player's result is stored; the right one is its opposite/equal.
  * About 73 bytes per match, 3 small indexes.
  */
 
@@ -160,7 +160,6 @@ const roundExpr = bitsOf('$d', D.round, ROUND_BITS);
 // Writing
 // ---------------------------------------------------------------------------
 
-/** Inserts matches not stored yet; a stored match keeps its first-seen time. */
 export async function saveCrawledMatches(matches: Match[], seasonId: number) {
     if (matches.length === 0) return { inserted: 0, invalid: 0 };
     await loadCodeBook();

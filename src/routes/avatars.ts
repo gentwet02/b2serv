@@ -9,7 +9,6 @@ import { logger } from '@/utils/logger';
  * `avatars` are the ones we already have (memory or MongoDB).
  * `pending` are players whose profile is being fetched from Ninja Kiwi right now
  * (low priority, through the rate limiter): ask again in a few seconds.
- * A player in neither list has no avatar we can get for now.
  */
 export const avatars = new Hono();
 

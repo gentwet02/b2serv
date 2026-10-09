@@ -2,10 +2,7 @@ import mongoose, { Schema, type Model } from 'mongoose';
 import type { Match } from '@/types/match';
 import { logger } from '@/utils/logger';
 
-/**
- * Hero portrait and map image URLs seen in NK data, in `nk_assets`, mirrored in memory.
- * Stored matches keep only hero and map names; this turns them back into pictures.
- */
+/** Hero portrait and map image URLs seen in nk data/assets, mirrored in memory */
 
 interface AssetDoc {
     kind: 'hero' | 'map';
@@ -48,7 +45,7 @@ export async function getAssetUrl(kind: AssetDoc['kind'], key: string) {
     return assets.get(`${kind}:${key}`);
 }
 
-/** Image URLs found in a batch of crawled NK matches. Writes only new ones. */
+/** Image URLs found in a batch of crawled NK matches. Writes only new ones */
 export async function rememberMatchAssets(matches: Match[]) {
     await loadAssets();
     const fresh: AssetDoc[] = [];

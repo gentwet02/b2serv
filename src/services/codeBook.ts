@@ -181,7 +181,7 @@ export function ensurePlayers(
     });
 }
 
-// ---------- lookups (call loadCodeBook() first) ----------
+// ---------- lookups ----------
 
 export const codeOf = (kind: CodeKind, name: string) => byName[kind].get(name);
 export const nameOf = (kind: CodeKind, code: number) => byCode[kind].get(code) ?? 'Unknown';
@@ -189,7 +189,6 @@ export const namesOf = (kind: CodeKind) => [...byName[kind].keys()];
 export const playerCodeOf = (userId: string) => playerByUser.get(userId);
 export const playerOf = (code: number) => playerByCode.get(code);
 
-/** Player codes whose in-game name or known real name contains `term`. */
 export function findPlayerCodes(term: string): number[] {
     const needle = term.trim().toLowerCase();
     if (!needle) return [];

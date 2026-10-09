@@ -27,7 +27,6 @@ const clampInt = (value: string | undefined, fallback: number, min: number, max:
 
 const NAME = /^[A-Za-z0-9_]{1,40}$/;
 
-/** "a,b,c" → valid distinct names, at most `max`. */
 const list = (value: string | undefined, max: number) =>
     [
         ...new Set(
@@ -38,7 +37,6 @@ const list = (value: string | undefined, max: number) =>
         ),
     ].slice(0, max);
 
-/** "Quincy" = any variant, "Quincy:Quincy_Cyber" = that variant only. */
 function parseHeroes(value: string | undefined): HeroPick[] {
     const picks: HeroPick[] = [];
     for (const item of (value ?? '').split(',')) {
@@ -62,7 +60,6 @@ function resolveSeason(param: string | undefined) {
     return param ? getSeasonById(Number(param)) : getLiveSeason();
 }
 
-/** Query params → filter, shared by the match list and the filter options. */
 function parseFilter(c: Context, seasonId: number): FacetFilter {
     const playerId = c.req.query('playerId');
     return {
@@ -80,7 +77,7 @@ function parseFilter(c: Context, seasonId: number): FacetFilter {
  * GET /matches-history
  *   ?season=46                     default: live season
  *   &sort=newest                   newest | oldest | longest | shortest | rounds
- *   &player=lazer                  part of an in-game or real name
+ *   &player=ign|alias                  part of an in-game or real name
  *   &playerId=<id>                 one player's matches (profiles)
  *   &heroes=Quincy,Adora:Adora_Fateweaver   up to 2; "Base" = any variant
  *   &towers=Druid,DartMonkey       up to 6, all of them in the match
@@ -133,10 +130,6 @@ matchesHistory.get('/', async (c) => {
     }
 });
 
-/**
- * Heroes (with variants), towers and maps, counted within the other selected filters:
- * same query params as the list. Only combinations that exist are returned.
- */
 matchesHistory.get('/filters', async (c) => {
     const season = resolveSeason(c.req.query('season'));
     if (!season) {
@@ -183,7 +176,6 @@ matchesHistory.get('/force-update', (c) => {
 
 export async function startMatchesScheduler() {
     void refreshMatchesHistory();
-    // a crawl starts NK_MATCHES_INTERVAL after the previous one ENDED
     scheduleEvery(
         'matches-history',
         async () => {

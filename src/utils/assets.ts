@@ -50,8 +50,7 @@ export function learnAssetUrl(url: string | undefined) {
 
 /** The working link for an NK asset (avatar, banner, border). */
 export function fixAssetUrl(url: string): string;
-export function fixAssetUrl(url: string | undefined): string | undefined;
-export function fixAssetUrl(url: string | undefined) {
+export function fixAssetUrl(url: string | undefined): string | undefined {
     if (!url) return url;
     learnAssetUrl(url);
     const asset = parse(url);

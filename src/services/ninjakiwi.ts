@@ -71,11 +71,6 @@ async function fetchLeaderboardPage(
     return data;
 }
 
-/**
- * Page 1 tells how many pages there are (maxPages); the others are then requested together.
- * The rate limiter still spaces them out, but their response times now overlap
- * instead of adding up one after another.
- */
 export async function fetchLeaderboard(
     seasonId: number,
     priority: Priority = 'low',
@@ -93,11 +88,10 @@ export async function fetchLeaderboard(
             pageNumbers.map((n) => fetchLeaderboardPage(seasonId, n, priority)),
         );
         for (const page of pages) {
-            if (!page) break; // keep the ranking contiguous: stop at the first missing page
+            if (!page) break;
             players.push(...(page.body ?? []));
         }
     } else if (first.next) {
-        // no maxPages in the answer: follow "next" one page at a time
         for (let pageNb = 2; pageNb <= MAX_LEADERBOARD_PAGES; pageNb++) {
             const page = await fetchLeaderboardPage(seasonId, pageNb, priority);
             if (!page) break;
@@ -150,11 +144,6 @@ export interface CrawlProgress {
     total: number;
 }
 
-/**
- * Collects the unique matches of every player.
- * `onProgress` is called every few players with the matches found so far,
- * so the first results can be served long before the crawl ends.
- */
 export async function processPlayersMatches(
     players: LeaderboardPlayer[],
     onProgress?: (matches: Map<string, Match>, progress: CrawlProgress) => void,

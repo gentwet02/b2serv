@@ -1,13 +1,9 @@
 import type { Model, NkApi } from '@/types/ninjakiwi';
 
 export interface LeaderboardPlayer {
-    /** The display name for this user */
     displayName: string;
-    /** The HoM score */
     score: number;
-    /** When true, the player is currenty in the HoM. This might be false if the user has been demoted from HoM by finishing in the demotion zone of an arena league */
     currentlyInHoM: boolean;
-    /** URL to the players public profile */
     profile: string;
 }
 

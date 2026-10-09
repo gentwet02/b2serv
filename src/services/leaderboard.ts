@@ -75,7 +75,7 @@ export function getRankHistory(userId: string) {
     return { current: history.find((h) => !h.final) ?? null, best, seasons: history };
 }
 
-/** Fetches a season from Ninja Kiwi, keeps it in memory and stores it in Mongo. */
+/** Fetches a season from Ninja Kiwi, keeps it in memory and stores it in Mongo */
 export function updateLeaderboard(season: SeasonInfo, priority: Priority = 'low'): Promise<void> {
     const id = season.seasonId;
     const running = inFlight.get(id);
@@ -105,10 +105,7 @@ export function updateLeaderboard(season: SeasonInfo, priority: Priority = 'low'
 
 export const getCachedLeaderboard = (seasonId: number) => cache.get(seasonId) ?? null;
 
-/**
- * What a visitor's request goes through: memory, then Mongo, then Ninja Kiwi at high priority.
- * A finished season is fetched from NK once in the server's whole life.
- */
+/** What a visitor's request goes through: memory, then Mongo, then Ninja Kiwi at high priority */
 export async function ensureLeaderboard(season: SeasonInfo): Promise<LeaderboardEntry | null> {
     const id = season.seasonId;
     const inMemory = cache.get(id);
@@ -136,10 +133,7 @@ export async function getLeaderboardPlayers(season: SeasonInfo, maxAgeMs = env.N
     return cache.get(season.seasonId)?.players ?? [];
 }
 
-/**
- * Background, low priority: fetch every finished season not stored yet,
- * one at a time, newest first. Runs once; afterwards old seasons are instant.
- */
+/** Background, low priority: fetch every finished season not stored yet */
 async function warmPastSeasons() {
     const stored = await listFinalSeasonIds();
     const missing = getSeasons().filter((s) => !s.live && !stored.has(s.seasonId));
@@ -155,7 +149,7 @@ async function warmPastSeasons() {
     logger.debug('Past seasons warmed');
 }
 
-/** Rank history needs every stored season; only their ranks are kept in memory. */
+/** Rank history needs every stored season; only their ranks are kept in memory */
 async function indexStoredSeasons() {
     const stored = await loadAllStoredLeaderboards();
     for (const entry of stored) {

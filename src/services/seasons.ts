@@ -4,7 +4,6 @@ import type { Season } from '@/types/season';
 import { logger } from '@/utils/logger';
 import { scheduleEvery } from '@/utils/scheduler';
 
-/** A season from the NK API, plus the id used in NK URLs and in our collection names. */
 export interface SeasonInfo extends Season {
     seasonId: number;
 }
@@ -15,10 +14,6 @@ const state = {
     lastFetch: null as Date | null,
 };
 
-/**
- * The id NK uses in its URLs (.../homs/season_45/leaderboard).
- * Read from the leaderboard URL first, the name is only a fallback.
- */
 function toSeasonId(season: Season): number | null {
     const fromUrl = String(season.leaderboard ?? '').match(/season_(\d+)/);
     if (fromUrl) return Number(fromUrl[1]);

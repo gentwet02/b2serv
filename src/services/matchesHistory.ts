@@ -19,7 +19,6 @@ export const crawlState = {
     lastRunStartedAt: null as Date | null,
     lastRunEndedAt: null as Date | null,
     lastError: null as string | null,
-    /** this run so far */
     found: 0,
     inserted: 0,
     rejected: 0,
@@ -108,7 +107,7 @@ export async function refreshMatchesHistory(): Promise<void> {
     }
 }
 
-/** ms until the next crawl may start (crawls are spaced from the end of the previous one). */
+/** ms until the next crawl may start (crawls are spaced from the end of the previous one) */
 export function nextCrawlInMs(): number | null {
     if (crawlState.isFetching) return null;
     const ended = crawlState.lastRunEndedAt?.getTime();
