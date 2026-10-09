@@ -22,7 +22,7 @@ export const playerNames: { [key: string]: string } = {
     '9fbf438cd690f0f04e46dd420d27e476c50119bdcf45da3f': 'Harry',
     '9cb81ed88ac7f9f0184387190d73e025cc501ce99913dd3a': 'Hooboo',
     '9cec438b8bc4a8a01141dc185c76b377cd071cbf9f14dd3b': 'J Simms',
-    '9fbe46ddd996faa24a16dc4e0d7be771cf0514ea9916db6b': 'Jake',
+    '9fbe46ddd996faa24a16dc4e0d7be771cf0514ea9916db6b': 'Jake6542',
     '9cba41df8996f9ac4e428d4a0e21b070cc0d14b9cd448e3f': 'Jude',
     '9fbd46dede92f0f04c4bdb1f5e72e271c4524cbf9b14df39': 'Juno',
     '9fbb10da8995f9ad1e4b8f4b0921e52298571eea9e118d3b': 'King Vonny',
