@@ -33,10 +33,6 @@ export const PLAYER_FETCH_CONCURRENCY = 4;
 
 /** Players read at the same time. The real pace is set by NK_REQUESTS_PER_SECOND. */
 export const CRAWL_CONCURRENCY = 2;
-/** Pages of one player's match history read per crawl, at most (newest first). */
-export const MATCH_HISTORY_MAX_PAGES = 10;
-/** Already stored matches in a row that prove we caught up with a player's history. */
-export const MATCH_HISTORY_OVERLAP = 3;
 /** Extra passes over the players NK did not answer for, at the end of a crawl. */
 export const CRAWL_RETRY_PASSES = 3;
 /** Pause before retry pass n: n × this. */

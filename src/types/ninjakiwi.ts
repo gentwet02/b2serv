@@ -17,11 +17,36 @@ export interface CrawlProgress {
     total: number;
 }
 
-export interface CrawlOptions {
+/** What the crawler asks the database. */
+export interface StoreLookup {
+    /** which of these match ids are already stored */
     isStored: (ids: string[]) => Promise<Set<string>>;
+    /** whether at least one match of this player is already stored this season */
+    hasHistory: (userId: string) => Promise<boolean>;
+}
+
+export interface HistoryOptions extends StoreLookup {
+    filter: (match: Match) => boolean;
+}
+
+/**
+ * One read of a player's matches. NK only serves the last ~24 matches, with no paging.
+ */
+export interface PlayerHistory {
+    /** matches that passed the filter, newest first */
+    matches: Match[];
+    /** false: the request failed — read this player again later */
+    ok: boolean;
+    /**
+     * true: we already knew this player but none of the returned matches is stored,
+     * so they played past NK's window since our last read and older matches are lost.
+     */
+    gap: boolean;
+}
+
+export interface CrawlOptions extends StoreLookup {
     filter?: (match: Match) => boolean;
     concurrency?: number;
-    maxPages?: number;
     onProgress?: (matches: Map<string, Match>, progress: CrawlProgress) => void;
 }
 
@@ -29,24 +54,6 @@ export interface CrawlResult {
     matches: Map<string, Match>;
     /** players with a failed request: read them again */
     failed: string[];
-    /** players whose history went past maxPages without meeting a stored match */
-    truncated: string[];
-    pages: number;
-}
-
-export interface HistoryOptions {
-    /** which of these match ids are already in the database */
-    isStored: (ids: string[]) => Promise<Set<string>>;
-    filter: (match: Match) => boolean;
-    maxPages: number;
-}
-
-export interface PlayerHistory {
-    /** matches that passed the filter, newest first */
-    matches: Match[];
-    pages: number;
-    /** false: a request failed — read this player again later */
-    ok: boolean;
-    /** true: we met matches already stored, or reached the end of NK's history */
-    complete: boolean;
+    /** players whose window overflowed since the last read (see PlayerHistory.gap) */
+    gaps: string[];
 }

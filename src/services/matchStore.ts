@@ -604,6 +604,17 @@ export async function findStoredIds(ids: string[], seasonId: number): Promise<Se
     return new Set(docs.map((doc) => unpackId(doc._id)));
 }
 
+export async function hasStoredMatches(userId: string, seasonId: number): Promise<boolean> {
+    await loadCodeBook();
+    const code = playerCodeOf(userId);
+    if (code === undefined) return false;
+    const doc = await collection(seasonId).findOne(
+        { $or: [{ a: code }, { b: code }] },
+        { projection: { _id: 1 } },
+    );
+    return doc !== null;
+}
+
 export async function getMatchesOfPlayer(userId: string, seasonId: number) {
     await loadCodeBook();
     const code = playerCodeOf(userId);

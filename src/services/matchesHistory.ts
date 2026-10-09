@@ -8,7 +8,7 @@ import {
 } from '@/config/constants';
 import { getLeaderboardPlayers } from '@/services/leaderboard';
 import { rememberMatchAssets } from '@/services/matchMeta';
-import { findStoredIds, saveCrawledMatches } from '@/services/matchStore';
+import { findStoredIds, hasStoredMatches, saveCrawledMatches } from '@/services/matchStore';
 import { processPlayersMatches } from '@/services/ninjakiwi';
 import { getLiveSeason } from '@/services/seasons';
 import type { Match } from '@/types/match';
@@ -17,16 +17,17 @@ import { logger } from '@/utils/logger';
 import { delay, extractUserId } from '@/utils/helpers';
 
 /**
- * The crawler only feeds the database: every HoM player's matches are read from NK and
- * new ones are stored as they are found (in batches), with image URLs.
+ * The crawler only feeds the database: every HoM player's recent matches are read from NK
+ * and new ones are stored as they are found (in batches), with image URLs.
  * Visitors read the database (services/matchStore.ts), never the crawler.
  *
- * Safety net, so a match is not lost because one request or one write failed:
- *  - each player's history is paged back until it meets matches already stored
- *    (services/ninjakiwi.ts → fetchPlayerHistory), so gaps fill themselves on the next run;
+ * NK only serves a player's last ~24 matches, with no paging. A match is kept only if we
+ * read the player (or the opponent) before it slips out of that window, so:
  *  - players NK did not answer for are read again at the end of the run, after a pause,
  *    and the ones still failing are read first on the next run;
- *  - a failed database write is retried, then kept in memory for the next run.
+ *  - a failed database write is retried, then kept in memory for the next run;
+ *  - a "gap" is counted when a known player's window holds no stored match at all:
+ *    they played past it since our last read, so some matches are lost.
  * The pace stays slow on purpose: the rate limiter (NK_REQUESTS_PER_SECOND) sets it.
  */
 
@@ -41,14 +42,12 @@ export const crawlState = {
     inserted: 0,
     rejected: 0,
     // safety net, for the current / last run
-    /** NK match pages read */
-    pages: 0,
     /** players read again after a failed request */
     retriedPlayers: 0,
     /** players still unreadable at the end of the run (read first on the next one) */
     failedPlayers: 0,
-    /** players whose history went past MATCH_HISTORY_MAX_PAGES without meeting a stored match */
-    truncatedPlayers: 0,
+    /** known players whose NK window overflowed since the last read (matches lost) */
+    gapPlayers: 0,
     /** matches whose database write failed, waiting for the next run */
     unsaved: 0,
 };
@@ -141,10 +140,9 @@ export async function refreshMatchesHistory(): Promise<void> {
         found: 0,
         inserted: 0,
         rejected: 0,
-        pages: 0,
         retriedPlayers: 0,
         failedPlayers: 0,
-        truncatedPlayers: 0,
+        gapPlayers: 0,
     });
     logger.debug(`Match crawl: starting for season ${seasonId}`);
 
@@ -174,11 +172,13 @@ export async function refreshMatchesHistory(): Promise<void> {
     };
 
     const isStored = (ids: string[]) => findStoredIds(ids, seasonId);
+    const hasHistory = (userId: string) => hasStoredMatches(userId, seasonId);
 
     const runPass = async (userIds: string[]) => {
         crawlState.progress = { done: 0, total: userIds.length };
         const result = await processPlayersMatches(userIds, {
             isStored,
+            hasHistory,
             filter: isRanked,
             concurrency: CRAWL_CONCURRENCY,
             onProgress: (found, progress) => {
@@ -187,11 +187,10 @@ export async function refreshMatchesHistory(): Promise<void> {
             },
         });
         flush(result.matches);
-        crawlState.pages += result.pages;
-        crawlState.truncatedPlayers += result.truncated.length;
-        if (result.truncated.length > 0) {
+        crawlState.gapPlayers += result.gaps.length;
+        if (result.gaps.length > 0) {
             logger.warn(
-                `Match crawl: history of ${result.truncated.length} player(s) went past the page limit, older matches may be missing: ${result.truncated.slice(0, 20).join(', ')}`,
+                `Match crawl: ${result.gaps.length} player(s) played past NK's window since the last read, some matches are lost: ${result.gaps.slice(0, 20).join(', ')}`,
             );
         }
         return result.failed;
@@ -234,8 +233,8 @@ export async function refreshMatchesHistory(): Promise<void> {
 
         logger.info(
             `Match crawl: ${crawlState.found} ranked matches seen, ${crawlState.inserted} new, ${crawlState.rejected} rejected, ` +
-                `${crawlState.pages} pages, ${crawlState.retriedPlayers} retried, ${crawlState.failedPlayers} failed, ` +
-                `${crawlState.truncatedPlayers} truncated, ${crawlState.unsaved} unsaved`,
+                `${crawlState.retriedPlayers} retried, ${crawlState.failedPlayers} failed, ` +
+                `${crawlState.gapPlayers} gaps, ${crawlState.unsaved} unsaved`,
         );
     } catch (error) {
         crawlState.lastError = String(error);

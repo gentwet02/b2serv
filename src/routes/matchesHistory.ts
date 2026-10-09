@@ -156,10 +156,9 @@ matchesHistory.get('/status', async (c) =>
         found: crawlState.found,
         rejected: crawlState.rejected,
         safety: {
-            pages: crawlState.pages,
             retriedPlayers: crawlState.retriedPlayers,
             failedPlayers: crawlState.failedPlayers,
-            truncatedPlayers: crawlState.truncatedPlayers,
+            gapPlayers: crawlState.gapPlayers,
             unsaved: crawlState.unsaved,
         },
         lastRunStartedAt: crawlState.lastRunStartedAt?.toISOString() ?? null,

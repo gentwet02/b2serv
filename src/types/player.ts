@@ -1,5 +1,5 @@
 import type { Match } from '@/types/match';
-import type { Model, NkApi } from '@/types/ninjakiwi';
+import type { Model } from '@/types/ninjakiwi';
 
 export interface PlayerDocument {
     _id?: string;
@@ -15,12 +15,15 @@ export interface PlayerDocument {
     }[];
 }
 
+/**
+ * GET /battles2/users/:id/matches — the player's last ~24 matches, newest first.
+ * No paging: `next` and `prev` are always null and there is no `maxPages`.
+ */
 export interface PlayerMatchesResponse {
-    error: string;
+    error: string | null;
     success: boolean;
     body: Match[];
     model: Model;
-    next: NkApi | null;
-    prev: NkApi | null;
-    maxPages: number;
+    next: null;
+    prev: null;
 }

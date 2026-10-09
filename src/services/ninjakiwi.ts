@@ -3,16 +3,14 @@ import {
     MAX_SEASON_PAGES,
     MAX_LEADERBOARD_PAGES,
     PLAYER_FETCH_CONCURRENCY,
-    MATCH_HISTORY_MAX_PAGES,
-    MATCH_HISTORY_OVERLAP,
 } from '@/config/constants';
 import { fetchWithRetry, type Priority } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 import type { LeaderboardPlayer, LeadrboardResponse } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
+import type { CrawlOptions, CrawlResult, HistoryOptions, PlayerHistory } from '@/types/ninjakiwi';
 import type { PlayerMatchesResponse } from '@/types/player';
 import type { Season, SeasonsResponse } from '@/types/season';
-import type { CrawlOptions, CrawlResult, HistoryOptions, PlayerHistory } from '@/types/ninjakiwi';
 
 function nextPageUrl(next: unknown): string | null {
     return typeof next === 'string' && next.length > 0 ? next : null;
@@ -110,85 +108,48 @@ export async function fetchLeaderboard(
 }
 
 // ---------------------------------------------------------------------------
-// One player's match history, paged until it meets matches we already stored
+// One player's matches. NK only serves the last ~24 matches, with no paging:
+// anything older is gone, so the only safety net is reading every player often
+// enough, and noticing when we didn't (a "gap").
 // ---------------------------------------------------------------------------
 
 /** null: NK did not answer, even after retries. */
-async function fetchMatchesPage(
-    url: string,
-    userId: string,
-    pageNb: number,
-): Promise<PlayerMatchesResponse | null> {
-    const data: PlayerMatchesResponse | null = await fetchWithRetry(url, {
+async function fetchMatches(userId: string): Promise<PlayerMatchesResponse | null> {
+    const data: PlayerMatchesResponse | null = await fetchWithRetry(NK_API.PLAYER_MATCHES(userId), {
         priority: 'low',
         retries: 4,
     });
 
     if (!data) {
-        logger.warn(`No response for matches of user ${userId} (page ${pageNb})`);
+        logger.warn(`No response for matches of user ${userId}`);
         return null;
     }
     if (!data.success || data.error) {
-        logger.warn(
-            `Matches of user ${userId} (page ${pageNb}) failed: ${data.error ?? 'unsuccessful'}`,
-        );
+        logger.warn(`Matches of user ${userId} failed: ${data.error ?? 'unsuccessful'}`);
         return null;
     }
     return data;
 }
 
-/**
- * Reads a player's matches newest first, page after page, until MATCH_HISTORY_OVERLAP
- * matches in a row are already stored: from there on, an earlier crawl has them.
- * Whatever happened in between (failed request, server restart, a player grinding many
- * games between two crawls) is filled in on the next run instead of being lost.
- */
 export async function fetchPlayerHistory(
     userId: string,
-    { isStored, filter, maxPages }: HistoryOptions,
+    { isStored, hasHistory, filter }: HistoryOptions,
 ): Promise<PlayerHistory> {
-    const matches: Match[] = [];
-    let url: string | null = NK_API.PLAYER_MATCHES(userId);
-    let pages = 0;
-    let storedInARow = 0;
+    const data = await fetchMatches(userId);
+    if (!data) return { matches: [], ok: false, gap: false };
 
-    while (url && pages < maxPages) {
-        const data = await fetchMatchesPage(url, userId, pages + 1);
-        if (!data) return { matches, pages, ok: false, complete: false };
-        pages++;
+    const matches = (data.body ?? []).filter(filter);
+    if (matches.length === 0) return { matches, ok: true, gap: false };
 
-        const body = data.body ?? [];
-        if (body.length === 0) return { matches, pages, ok: true, complete: true };
-
-        // unranked matches are never stored: they neither prove nor break the overlap
-        const kept = body.filter(filter);
-        matches.push(...kept);
-
-        if (kept.length > 0) {
-            let stored: Set<string>;
-            try {
-                stored = await isStored(kept.map((m) => m.id));
-            } catch (error) {
-                logger.warn(`Checking stored matches of user ${userId} failed: ${error}`);
-                return { matches, pages, ok: false, complete: false };
-            }
-            for (const match of kept) {
-                storedInARow = stored.has(match.id) ? storedInARow + 1 : 0;
-                if (storedInARow >= MATCH_HISTORY_OVERLAP) {
-                    return { matches, pages, ok: true, complete: true };
-                }
-            }
-        }
-
-        url = nextPageUrl(data.next);
-        if (data.next && !url) {
-            logger.error(
-                `Unrecognised "next" format in matches of user ${userId}: ${JSON.stringify(data.next)}`,
-            );
-        }
+    // gap check only: a database hiccup here must not cost us the matches themselves
+    try {
+        const stored = await isStored(matches.map((m) => m.id));
+        const gap = stored.size === 0 && (await hasHistory(userId));
+        return { matches, ok: true, gap };
+    } catch (error) {
+        logger.warn(`Gap check of user ${userId} failed: ${error}`);
+        return { matches, ok: true, gap: false };
     }
-
-    return { matches, pages, ok: true, complete: url === null };
 }
 
 async function forEachWithConcurrency<T>(
@@ -212,34 +173,32 @@ export async function processPlayersMatches(
 ): Promise<CrawlResult> {
     const {
         isStored,
+        hasHistory,
         filter = () => true,
         concurrency = PLAYER_FETCH_CONCURRENCY,
-        maxPages = MATCH_HISTORY_MAX_PAGES,
         onProgress,
     } = options;
 
     const matches = new Map<string, Match>();
     const failed: string[] = [];
-    const truncated: string[] = [];
-    let pages = 0;
+    const gaps: string[] = [];
     let done = 0;
     let lastReport = 0;
 
     await forEachWithConcurrency(userIds, concurrency, async (userId) => {
         let history: PlayerHistory;
         try {
-            history = await fetchPlayerHistory(userId, { isStored, filter, maxPages });
+            history = await fetchPlayerHistory(userId, { isStored, hasHistory, filter });
         } catch (error) {
             logger.error(`Reading matches of user ${userId} failed: ${error}`);
-            history = { matches: [], pages: 0, ok: false, complete: false };
+            history = { matches: [], ok: false, gap: false };
         }
 
-        pages += history.pages;
         for (const match of history.matches) {
             if (!matches.has(match.id)) matches.set(match.id, match);
         }
         if (!history.ok) failed.push(userId);
-        else if (!history.complete) truncated.push(userId);
+        if (history.gap) gaps.push(userId);
 
         done++;
         const now = Date.now();
@@ -249,10 +208,10 @@ export async function processPlayersMatches(
         }
         if (done % 100 === 0 || done === userIds.length) {
             logger.debug(
-                `Player matches: ${done}/${userIds.length} players, ${pages} pages, ${matches.size} unique matches`,
+                `Player matches: ${done}/${userIds.length} players, ${matches.size} unique matches`,
             );
         }
     });
 
-    return { matches, failed, truncated, pages };
+    return { matches, failed, gaps };
 }
