@@ -9,10 +9,10 @@ import {
 import { fetchWithRetry, type Priority } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 import type { LeaderboardPlayer, LeadrboardResponse } from '@/types/leaderboard';
-import type { HistoryOptions, Match } from '@/types/match';
-import type { PlayerHistory, PlayerMatchesResponse } from '@/types/player';
+import type { Match } from '@/types/match';
+import type { PlayerMatchesResponse } from '@/types/player';
 import type { Season, SeasonsResponse } from '@/types/season';
-import { CrawlOptions, CrawlResult } from '@/types/ninjakiwi';
+import type { CrawlOptions, CrawlResult, HistoryOptions, PlayerHistory } from '@/types/ninjakiwi';
 
 function nextPageUrl(next: unknown): string | null {
     return typeof next === 'string' && next.length > 0 ? next : null;

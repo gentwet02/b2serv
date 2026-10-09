@@ -24,13 +24,3 @@ export interface PlayerMatchesResponse {
     prev: NkApi | null;
     maxPages: number;
 }
-
-export interface PlayerHistory {
-    /** matches that passed the filter, newest first */
-    matches: Match[];
-    pages: number;
-    /** false: a request failed — read this player again later */
-    ok: boolean;
-    /** true: we met matches already stored, or reached the end of NK's history */
-    complete: boolean;
-}

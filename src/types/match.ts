@@ -1,5 +1,5 @@
-import { MATCH_SORTS } from '@/config/constants';
-import mongoose from 'mongoose';
+import type { MATCH_SORTS } from '@/config/constants';
+import type mongoose from 'mongoose';
 
 export interface MatchPlayer {
     displayName: string;
@@ -43,13 +43,6 @@ export interface CachedMatches {
     totalMatches: number;
     matches: Match[];
     seasonID: number;
-}
-
-export interface HistoryOptions {
-    /** which of these match ids are already in the database */
-    isStored: (ids: string[]) => Promise<Set<string>>;
-    filter: (match: Match) => boolean;
-    maxPages: number;
 }
 
 export interface StoredMatchDoc {
