@@ -21,6 +21,7 @@ export const playerNames: { [key: string]: string } = {
     '9fbf438cd690f0f04e46dd420d27e476c50119bdcf45da3f': 'Harry',
     '9cb81ed88ac7f9f0184387190d73e025cc501ce99913dd3a': 'Hooboo',
     '9cec438b8bc4a8a01141dc185c76b377cd071cbf9f14dd3b': 'J Simms',
+    '9fbe46ddd996faa24a16dc4e0d7be771cf0514ea9916db6b': 'Jake',
     '9cba41df8996f9ac4e428d4a0e21b070cc0d14b9cd448e3f': 'Jude',
     '9fbd46dede92f0f04c4bdb1f5e72e271c4524cbf9b14df39': 'Juno',
     '9fbb10da8995f9ad1e4b8f4b0921e52298571eea9e118d3b': 'King Vonny',
@@ -56,6 +57,7 @@ export const playerNames: { [key: string]: string } = {
     '9cb616ded693f8f04d16894d5920e770cc551fbccf19dd6c': 'Upwn',
     '9cb817828bc2afac1c438d4c5775b426cc0d1ab9cf118a6d': 'Urhere',
     '9fbe10d98c9ef8a211108d4a5a22e5769a0d1ab99a42d839': 'Vuldora',
+    '9cb9118fd893f0a34c46894e5875b476cc0d14bccf108d3f': 'Wilfykeen',
     '9fb84382d997aaa71f148e495b71b07ec4014bb89941d038': 'Yapper',
     '9fbe4683dfc2fff34b138b435b7be27f9a504cb8cd198d3f': 'Yeetboy',
 } as const;
