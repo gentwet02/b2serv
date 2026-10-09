@@ -1,5 +1,6 @@
 export const playerNames: { [key: string]: string } = {
     '9fb643d88993fea14b4bdd4c5a74e3239f0749b49a42de31': 'AaronTheLegend',
+    '9ceb428ddf93fbf61b14dc4f5926e5769f511deecb45d96b': 'Acidic',
     '9fbf178f8e95faf64a13db490b21e773ca0c18be9618da3a': 'Aliens',
     '9fb813898b94fca31f468d180e77e7729e0148ea9d178a3f': 'Aitakute',
     '9fbf44dd8dc3ffa31143874b5b77e224c4074eef9b188a39': 'Alirts',
@@ -28,6 +29,7 @@ export const playerNames: { [key: string]: string } = {
     '9fb9458d8d97f9ac4b168e490922e7759d0d14b998108a3d': 'Kingvon',
     '9fb91fdd8a93faf31e4ad94c5c74e325ca0c4fe9cd428e3e': 'Lazer_old',
     '9fee1189df93f9a41c45884c5e73e3729e0d1cb9cd41da30': 'Lazer',
+    '9fb912dddc96fca61c428e4e5927ef7ec95218b89912d06e': 'Lildoc',
     '9fbe468cdd93abf44e40de4e5b72e273995549bb9b42d16a': 'LMS',
     '9ce9448bdbc5adad1d10db435b73e77f9a511ab99d18da3e': 'Lydia',
     '9cea138bd790ffa04d46db435f21e77fc9551eb89f19db39': 'Madoka',
