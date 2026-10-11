@@ -11,6 +11,7 @@ import { fetchSeasons } from '@/services/ninjakiwi';
 import { toSeasonId } from '@/services/seasons';
 import type { Match } from '@/types/match';
 import { extractUserId } from '@/utils/helpers';
+import { readJsonObjects } from '@/utils/readJsonObjects';
 
 interface ImportedRecord {
     _id?: string;
@@ -60,43 +61,6 @@ if (!file || (expected !== undefined && !(Number.isInteger(expected) && expected
 if (!(await Bun.file(file).exists())) {
     console.error(`File not found: ${file}`);
     process.exit(1);
-}
-
-// ---------- streaming reader: yields each match object ----------
-
-async function* readObjects(path: string): AsyncGenerator<unknown> {
-    const decoder = new TextDecoder();
-    let buf = '';
-    let depth = 0;
-    let start = -1;
-    let inString = false;
-    let escaped = false;
-
-    for await (const chunk of Bun.file(path).stream()) {
-        const from = buf.length;
-        buf += decoder.decode(chunk, { stream: true });
-        for (let i = from; i < buf.length; i++) {
-            const ch = buf[i];
-            if (inString) {
-                if (escaped) escaped = false;
-                else if (ch === '\\') escaped = true;
-                else if (ch === '"') inString = false;
-                continue;
-            }
-            if (ch === '"') inString = true;
-            else if (ch === '{') {
-                if (depth++ === 0) start = i;
-            } else if (ch === '}' && --depth === 0) {
-                yield JSON.parse(buf.slice(start, i + 1));
-                start = -1;
-            }
-        }
-        if (start === -1) buf = '';
-        else {
-            buf = buf.slice(start);
-            start = 0;
-        }
-    }
 }
 
 // ---------- NK seasons: key → our id ----------
@@ -206,7 +170,9 @@ async function flush(seasonId: number) {
     const matches = items.map((i) => i.match);
     const dates = new Map(items.map((i) => [i.match.id, i.t]));
     await rememberMatchAssets(matches);
-    const result = await saveCrawledMatches(matches, seasonId, (m) => dates.get(m.id));
+    const result = await saveCrawledMatches(matches, seasonId, (m) => dates.get(m.id), {
+        renamePlayers: false,
+    });
     entry.inserted += result.inserted;
     entry.invalid += result.invalid;
     console.log(`season ${seasonId}: ${entry.inserted} inserted so far`);
@@ -215,7 +181,7 @@ async function flush(seasonId: number) {
 // ---------- read ----------
 
 try {
-    for await (const raw of readObjects(file)) {
+    for await (const raw of readJsonObjects(file)) {
         const record = raw as ImportedRecord;
         const match = record.body;
         if (!match?.id || !match.playerLeft || !match.playerRight) {

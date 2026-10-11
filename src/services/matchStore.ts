@@ -164,6 +164,7 @@ export async function saveCrawledMatches(
     matches: Match[],
     seasonId: number,
     seenAt?: (match: Match) => number | undefined,
+    { renamePlayers = true }: { renamePlayers?: boolean } = {},
 ) {
     if (matches.length === 0) return { inserted: 0, invalid: 0 };
     await loadCodeBook();
@@ -187,7 +188,10 @@ export async function saveCrawledMatches(
             'result',
             matches.map((m) => m.playerLeft.result),
         ),
-        ensurePlayers(sides.map((p) => [extractUserId(p.profileURL), p.displayName])),
+        ensurePlayers(
+            sides.map((p) => [extractUserId(p.profileURL), p.displayName]),
+            { rename: renamePlayers },
+        ),
     ]);
 
     const now = Math.floor(Date.now() / 60_000);

@@ -140,14 +140,17 @@ export function ensureCodes(kind: CodeKind, names: Iterable<string>): Promise<vo
 /** Makes sure every player has a code, and keeps display names current. */
 export function ensurePlayers(
     entries: Iterable<[userId: string, displayName: string]>,
+    { rename = true }: { rename?: boolean } = {},
 ): Promise<void> {
     const latest = new Map<string, string>();
     for (const [userId, name] of entries) if (userId) latest.set(userId, name || 'Unknown player');
 
     const missing = [...latest.keys()].filter((u) => !playerByUser.has(u));
-    const renamed = [...latest].filter(
-        ([u, n]) => playerByUser.has(u) && playerByCode.get(playerByUser.get(u)!)?.n !== n,
-    );
+    const renamed = rename
+        ? [...latest].filter(
+              ([u, n]) => playerByUser.has(u) && playerByCode.get(playerByUser.get(u)!)?.n !== n,
+          )
+        : [];
     if (missing.length === 0 && renamed.length === 0) return Promise.resolve();
 
     return serialized(async () => {
