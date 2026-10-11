@@ -6,7 +6,7 @@ import {
     MAX_UNSAVED,
     STORE_ATTEMPTS,
 } from '@/config/constants';
-import { getLeaderboardPlayers } from '@/services/leaderboard';
+import { getCachedLeaderboard, getLeaderboardPlayers } from '@/services/leaderboard';
 import { rememberMatchAssets } from '@/services/matchMeta';
 import { findStoredIds, hasStoredMatches, saveCrawledMatches } from '@/services/matchStore';
 import { processPlayersMatches } from '@/services/ninjakiwi';
@@ -15,6 +15,7 @@ import type { Match } from '@/types/match';
 import type { CrawlProgress } from '@/types/ninjakiwi';
 import { logger } from '@/utils/logger';
 import { delay, extractUserId } from '@/utils/helpers';
+import { LeaderboardPlayer } from '@/types/leaderboard';
 
 /**
  * The crawler only feeds the database: every HoM player's recent matches are read from NK
@@ -50,9 +51,28 @@ export const crawlState = {
     gapPlayers: 0,
     /** matches whose database write failed, waiting for the next run */
     unsaved: 0,
+    /** ranked matches dropped because a player is not in HoM any more (other arena) */
+    notHoM: 0,
 };
 
 const isRanked = (match: Match) => match.gametype === 'Ranked';
+
+let homIndex: { seasonId: number; updatedAt: Date; ids: Set<string> } | null = null;
+const homIds = (players: LeaderboardPlayer[]) =>
+    new Set(players.filter((p) => p.currentlyInHoM).map((p) => extractUserId(p.profile)));
+
+function hallOfMasters(seasonId: number): Set<string> | null {
+    const entry = getCachedLeaderboard(seasonId);
+    if (!entry) return homIndex?.seasonId === seasonId ? homIndex.ids : null;
+    if (homIndex?.seasonId !== seasonId || homIndex.updatedAt !== entry.updatedAt) {
+        homIndex = { seasonId, updatedAt: entry.updatedAt, ids: homIds(entry.players) };
+    }
+    return homIndex.ids;
+}
+
+const bothInHoM = (match: Match, hom: Set<string>) =>
+    hom.has(extractUserId(match.playerLeft.profileURL)) &&
+    hom.has(extractUserId(match.playerRight.profileURL));
 
 /** Players NK did not answer for, by season: read first on the next run. */
 const pendingPlayers = new Map<number, Set<string>>();
@@ -143,6 +163,7 @@ export async function refreshMatchesHistory(): Promise<void> {
         retriedPlayers: 0,
         failedPlayers: 0,
         gapPlayers: 0,
+        notHoM: 0,
     });
     logger.debug(`Match crawl: starting for season ${seasonId}`);
 
@@ -150,14 +171,18 @@ export async function refreshMatchesHistory(): Promise<void> {
     const stored = new Set<string>();
     // batches are written one after another, never in parallel
     let writing: Promise<void> = Promise.resolve();
+    // the roster read at the start of the run, if the cache were ever missing
+    let startRoster = new Set<string>();
 
     const flush = (found: Map<string, Match>) => {
+        // read the flags now, after the matches: picks up leaderboard refreshes during the crawl
+        const hom = hallOfMasters(seasonId) ?? startRoster;
         const batch: Match[] = [];
         for (const [id, match] of found) {
-            if (!stored.has(id)) {
-                stored.add(id);
-                batch.push(match);
-            }
+            if (stored.has(id)) continue;
+            stored.add(id);
+            if (bothInHoM(match, hom)) batch.push(match);
+            else crawlState.notHoM++;
         }
         crawlState.found = stored.size;
         if (batch.length === 0) return;
@@ -202,11 +227,14 @@ export async function refreshMatchesHistory(): Promise<void> {
         const players = await getLeaderboardPlayers(season);
         if (players.length === 0) throw new Error(`Empty leaderboard for season ${seasonId}`);
 
+        startRoster = homIds(players);
+        if (startRoster.size === 0) throw new Error(`Nobody in HoM for season ${seasonId}`);
+
         // players left over from the previous run first, then the leaderboard
-        const pending = pendingPlayers.get(seasonId) ?? new Set<string>();
-        const userIds = [
-            ...new Set([...pending, ...players.map((p) => extractUserId(p.profile))]),
-        ].filter(Boolean);
+        const pending = [...(pendingPlayers.get(seasonId) ?? [])].filter((id) =>
+            startRoster.has(id),
+        );
+        const userIds = [...new Set([...pending, ...startRoster])].filter(Boolean);
         pendingPlayers.delete(seasonId);
 
         let failed = await runPass(userIds);
@@ -234,7 +262,8 @@ export async function refreshMatchesHistory(): Promise<void> {
         logger.info(
             `Match crawl: ${crawlState.found} ranked matches seen, ${crawlState.inserted} new, ${crawlState.rejected} rejected, ` +
                 `${crawlState.retriedPlayers} retried, ${crawlState.failedPlayers} failed, ` +
-                `${crawlState.gapPlayers} gaps, ${crawlState.unsaved} unsaved`,
+                `${crawlState.gapPlayers} gaps, ${crawlState.unsaved} unsaved, ` +
+                `${crawlState.notHoM} dropped (player out of HoM)`,
         );
     } catch (error) {
         crawlState.lastError = String(error);
