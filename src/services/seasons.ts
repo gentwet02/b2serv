@@ -14,7 +14,7 @@ const state = {
     lastFetch: null as Date | null,
 };
 
-function toSeasonId(season: Season): number | null {
+export function toSeasonId(season: Season): number | null {
     const fromUrl = String(season.leaderboard ?? '').match(/season_(\d+)/);
     if (fromUrl) return Number(fromUrl[1]);
 

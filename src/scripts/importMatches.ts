@@ -1,19 +1,43 @@
 /**
  * Import matches from an external dump into matches_s<season>.
- * bun run src/scripts/importMatches.ts --file=src/data/matches.json --season=46 [--dry-run] [--batch=1000]
+ * bun run src/scripts/importMatches.ts --file=<path> [--season=46] [--dry-run] [--batch=1000]
  */
 import mongoose from 'mongoose';
 import connectDB from '@/services/database';
+import { CODE_BITS, codeOf, namesOf, playerCodeOf, type CodeKind } from '@/services/codeBook';
 import { rememberMatchAssets } from '@/services/matchMeta';
-import { saveCrawledMatches } from '@/services/matchStore';
+import { countMatches, findStoredDates, saveCrawledMatches } from '@/services/matchStore';
+import { fetchSeasons } from '@/services/ninjakiwi';
+import { toSeasonId } from '@/services/seasons';
 import type { Match } from '@/types/match';
-import { logger } from '@/utils/logger';
+import { extractUserId } from '@/utils/helpers';
 
 interface ImportedRecord {
     _id?: string;
     date?: number; // unix seconds
-    season?: string; // NK season key, "mt8f8io3"
+    season?: string; // NK season key, e.g. "mt8f8io3"
     body?: Match;
+}
+
+interface SeasonRef {
+    seasonId: number;
+    name: string;
+    key: string;
+    start: number; // ms
+    end: number; // ms
+    live: boolean;
+}
+
+interface SeasonStats {
+    ref: SeasonRef | null;
+    records: number;
+    outsideWindow: number;
+    inDbBefore: number;
+    notInDb: number;
+    alreadyStored: number;
+    earlierDate: number;
+    inserted: number;
+    invalid: number;
 }
 
 // ---------- args ----------
@@ -25,14 +49,12 @@ const args = Object.fromEntries(
     }),
 );
 const file = args.file;
-const seasonId = Number(args.season);
+const expected = args.season !== undefined ? Number(args.season) : undefined;
 const batchSize = Math.max(1, Number(args.batch ?? 1000));
 const dryRun = args['dry-run'] === 'true';
 
-if (!file || !Number.isInteger(seasonId) || seasonId < 1) {
-    console.error(
-        'Usage: --file=<path> --season=<our season id, e.g. 46> [--dry-run] [--batch=1000]',
-    );
+if (!file || (expected !== undefined && !(Number.isInteger(expected) && expected > 0))) {
+    console.error('Usage: --file=<path> [--season=<our season id>] [--dry-run] [--batch=1000]');
     process.exit(1);
 }
 if (!(await Bun.file(file).exists())) {
@@ -40,7 +62,7 @@ if (!(await Bun.file(file).exists())) {
     process.exit(1);
 }
 
-// ---------- streaming reader: yields each top-level {...} ----------
+// ---------- streaming reader: yields each match object ----------
 
 async function* readObjects(path: string): AsyncGenerator<unknown> {
     const decoder = new TextDecoder();
@@ -69,7 +91,6 @@ async function* readObjects(path: string): AsyncGenerator<unknown> {
                 start = -1;
             }
         }
-        // drop what is already parsed
         if (start === -1) buf = '';
         else {
             buf = buf.slice(start);
@@ -78,85 +99,254 @@ async function* readObjects(path: string): AsyncGenerator<unknown> {
     }
 }
 
-// ---------- import ----------
+// ---------- NK seasons: key → our id ----------
 
-const totals = {
-    read: 0,
-    malformed: 0,
-    notRanked: 0,
-    duplicates: 0,
-    sent: 0,
-    inserted: 0,
-    invalid: 0,
+const toMs = (v: number) => (v < 1e12 ? v * 1000 : v);
+const WINDOW_MARGIN_MS = 60 * 60_000;
+
+const nkList = await fetchSeasons();
+if (nkList.length === 0) {
+    console.error("Couldn't fetch NK's season list, try again in a minute.");
+    process.exit(1);
+}
+const byKey = new Map<string, SeasonRef>();
+const byId = new Map<number, SeasonRef>();
+for (const s of nkList) {
+    const seasonId = toSeasonId(s);
+    if (seasonId === null) continue;
+    const ref = {
+        seasonId,
+        name: s.name,
+        key: s.id,
+        start: toMs(s.start),
+        end: toMs(s.end),
+        live: s.live,
+    };
+    byKey.set(s.id, ref);
+    byId.set(seasonId, ref);
+}
+
+// ---------- state ----------
+
+await connectDB(); // reads the code book; writes happen only without --dry-run
+
+const skipped = { malformed: 0, notRanked: 0, duplicates: 0, unknownKey: 0, otherSeason: 0 };
+const unknownKeys = new Map<string, number>();
+const otherSeasons = new Map<string, number>();
+const stats = new Map<number, SeasonStats>();
+const batches = new Map<number, Map<string, { match: Match; t?: number }>>();
+const seenIds = new Map<number, Set<string>>();
+let outOfRange = 0;
+
+const newCodes: Record<CodeKind, Set<string>> = {
+    hero: new Set(),
+    tower: new Set(),
+    map: new Set(),
+    result: new Set(),
 };
-const nkSeasons = new Map<string, number>();
-let batch = new Map<string, { match: Match; t?: number }>();
-const started = Date.now();
+const newPlayers = new Set<string>();
 
-async function flush() {
-    if (batch.size === 0) return;
+function previewCodes(match: Match) {
+    const add = (kind: CodeKind, name: string) => {
+        if (name && codeOf(kind, name) === undefined) newCodes[kind].add(name);
+    };
+    add('map', match.map);
+    add('result', match.playerLeft.result);
+    for (const p of [match.playerLeft, match.playerRight]) {
+        add('hero', p.hero);
+        for (const t of [p.towerone, p.towertwo, p.towerthree]) add('tower', t);
+        const user = extractUserId(p.profileURL);
+        if (user && playerCodeOf(user) === undefined) newPlayers.add(user);
+    }
+    const round = Math.round(match.endRound);
+    const duration = Math.round(match.duration);
+    if (!(round >= 0 && round <= 127) || !(duration >= 0 && duration <= 16383)) outOfRange++;
+}
+
+async function statsFor(seasonId: number): Promise<SeasonStats> {
+    let entry = stats.get(seasonId);
+    if (!entry) {
+        entry = {
+            ref: byId.get(seasonId) ?? null,
+            records: 0,
+            outsideWindow: 0,
+            inDbBefore: await countMatches(seasonId),
+            notInDb: 0,
+            alreadyStored: 0,
+            earlierDate: 0,
+            inserted: 0,
+            invalid: 0,
+        };
+        stats.set(seasonId, entry);
+    }
+    return entry;
+}
+
+async function flush(seasonId: number) {
+    const batch = batches.get(seasonId);
+    if (!batch || batch.size === 0) return;
+    batches.delete(seasonId);
     const items = [...batch.values()];
-    batch = new Map();
-    totals.sent += items.length;
+    const entry = await statsFor(seasonId);
+
+    const stored = await findStoredDates(
+        items.map((i) => i.match.id),
+        seasonId,
+    );
+    for (const { match, t } of items) {
+        const storedT = stored.get(match.id);
+        if (storedT === undefined) entry.notInDb++;
+        else {
+            entry.alreadyStored++;
+            if (t !== undefined && t < storedT) entry.earlierDate++;
+        }
+    }
     if (dryRun) return;
 
     const matches = items.map((i) => i.match);
     const dates = new Map(items.map((i) => [i.match.id, i.t]));
     await rememberMatchAssets(matches);
     const result = await saveCrawledMatches(matches, seasonId, (m) => dates.get(m.id));
-    totals.inserted += result.inserted;
-    totals.invalid += result.invalid;
-    logger.info(
-        `${totals.sent} sent, ${totals.inserted} new, ${totals.invalid} invalid (${Math.round((Date.now() - started) / 1000)} s)`,
-    );
+    entry.inserted += result.inserted;
+    entry.invalid += result.invalid;
+    console.log(`season ${seasonId}: ${entry.inserted} inserted so far`);
 }
 
-if (!dryRun) await connectDB();
+// ---------- read ----------
 
 try {
     for await (const raw of readObjects(file)) {
-        totals.read++;
         const record = raw as ImportedRecord;
         const match = record.body;
         if (!match?.id || !match.playerLeft || !match.playerRight) {
-            totals.malformed++;
+            skipped.malformed++;
             continue;
         }
         if (match.gametype !== 'Ranked') {
-            totals.notRanked++;
+            skipped.notRanked++;
             continue;
         }
-        if (record.season) nkSeasons.set(record.season, (nkSeasons.get(record.season) ?? 0) + 1);
 
-        const t =
-            typeof record.date === 'number' && Number.isFinite(record.date)
-                ? Math.floor(record.date / 60)
-                : undefined;
-        const existing = batch.get(match.id);
-        if (existing) {
-            totals.duplicates++;
-            if (t !== undefined && (existing.t === undefined || t < existing.t)) existing.t = t;
+        const key = record.season ?? '';
+        const ref = byKey.get(key);
+        let seasonId: number;
+        if (ref) {
+            if (expected !== undefined && ref.seasonId !== expected) {
+                skipped.otherSeason++;
+                otherSeasons.set(
+                    `${key} → ${ref.seasonId}`,
+                    (otherSeasons.get(`${key} → ${ref.seasonId}`) ?? 0) + 1,
+                );
+                continue;
+            }
+            seasonId = ref.seasonId;
+        } else if (expected !== undefined) {
+            seasonId = expected; // NK doesn't list this key: trust --season
+            unknownKeys.set(key, (unknownKeys.get(key) ?? 0) + 1);
+        } else {
+            skipped.unknownKey++;
+            unknownKeys.set(key, (unknownKeys.get(key) ?? 0) + 1);
             continue;
         }
-        batch.set(match.id, { match, t });
-        if (batch.size >= batchSize) await flush();
+
+        let ids = seenIds.get(seasonId);
+        if (!ids) seenIds.set(seasonId, (ids = new Set()));
+        if (ids.has(match.id)) {
+            skipped.duplicates++;
+            continue;
+        }
+        ids.add(match.id);
+
+        const entry = await statsFor(seasonId);
+        entry.records++;
+        const dateMs =
+            typeof record.date === 'number' && Number.isFinite(record.date)
+                ? record.date * 1000
+                : undefined;
+        const window = entry.ref;
+        if (
+            dateMs !== undefined &&
+            window &&
+            (dateMs < window.start - WINDOW_MARGIN_MS || dateMs > window.end + WINDOW_MARGIN_MS)
+        ) {
+            entry.outsideWindow++;
+        }
+
+        previewCodes(match);
+
+        let batch = batches.get(seasonId);
+        if (!batch) batches.set(seasonId, (batch = new Map()));
+        batch.set(match.id, {
+            match,
+            t: dateMs !== undefined ? Math.floor(dateMs / 60_000) : undefined,
+        });
+        if (batch.size >= batchSize) await flush(seasonId);
     }
-    await flush();
+    for (const seasonId of [...batches.keys()]) await flush(seasonId);
 } finally {
-    if (!dryRun) await mongoose.disconnect();
+    await mongoose.disconnect();
 }
 
-console.log(dryRun ? '\nDRY RUN, nothing written' : '\nDone');
+// ---------- report ----------
+
+console.log(dryRun ? '\nDRY RUN: DB and NK read, nothing written' : '\nDone');
+
+console.log('\nPer season');
+console.table(
+    Object.fromEntries(
+        [...stats].map(([id, s]) => [
+            `${id}${s.ref ? ` (${s.ref.name}, ${s.ref.key}${s.ref.live ? ', live' : ''})` : ' (not in NK list)'}`,
+            {
+                'in file': s.records,
+                'date outside season': s.outsideWindow,
+                'in db before': s.inDbBefore,
+                'already stored': s.alreadyStored,
+                'not in db': s.notInDb,
+                'date moves earlier': s.earlierDate,
+                ...(dryRun ? {} : { inserted: s.inserted, invalid: s.invalid }),
+            },
+        ]),
+    ),
+);
+
+console.log('\nSkipped');
 console.table({
-    'records read': totals.read,
-    malformed: totals.malformed,
-    'not ranked (skipped)': totals.notRanked,
-    'duplicates in file': totals.duplicates,
-    'sent to db': totals.sent,
-    'new matches': dryRun ? '-' : totals.inserted,
-    'already stored': dryRun ? '-' : totals.sent - totals.inserted - totals.invalid,
-    'invalid (codes/range)': dryRun ? '-' : totals.invalid,
+    malformed: skipped.malformed,
+    'not ranked': skipped.notRanked,
+    'duplicates in file': skipped.duplicates,
+    'unknown NK season key': skipped.unknownKey,
+    'other season than --season': skipped.otherSeason,
+    'round/duration out of range': outOfRange,
 });
-console.log('NK season keys in file:', Object.fromEntries(nkSeasons));
-if (nkSeasons.size > 1)
-    console.warn('⚠ More than one NK season in this file: split it before importing.');
+if (unknownKeys.size > 0)
+    console.log('NK keys not in NK season list:', Object.fromEntries(unknownKeys));
+if (otherSeasons.size > 0)
+    console.log('Records of other seasons:', Object.fromEntries(otherSeasons));
+
+console.log('\nCode book');
+console.table(
+    Object.fromEntries(
+        (Object.keys(newCodes) as CodeKind[]).map((kind) => {
+            const total = namesOf(kind).length + newCodes[kind].size;
+            return [
+                kind,
+                {
+                    new: newCodes[kind].size,
+                    'total after': total,
+                    capacity: 2 ** CODE_BITS[kind],
+                    names: [...newCodes[kind]].slice(0, 8).join(', '),
+                },
+            ];
+        }),
+    ),
+);
+console.log(`New players: ${newPlayers.size}`);
+for (const kind of Object.keys(newCodes) as CodeKind[]) {
+    if (namesOf(kind).length + newCodes[kind].size > 2 ** CODE_BITS[kind]) {
+        console.warn(
+            `⚠ ${kind} codes would exceed ${CODE_BITS[kind]} bits: those matches would be invalid`,
+        );
+    }
+}
+
+process.exit(0);
