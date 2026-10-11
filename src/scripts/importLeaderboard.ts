@@ -120,21 +120,24 @@ for (const [key, snap] of latest) {
 
     const stored = await loadStoredLeaderboard(seasonId);
     let differs: number | string = '-';
+    let namesDiffer: number | string = '-';
     if (stored && stored.players.length > 0) {
         const n = Math.max(stored.players.length, players.length);
         let diff = 0;
+        let names = 0;
         for (let i = 0; i < n; i++) {
             const a = stored.players[i];
             const b = players[i];
-            if (
-                !a ||
-                !b ||
-                extractUserId(a.profile) !== extractUserId(b.profile) ||
-                a.score !== b.score
-            )
-                diff++;
+            const sameRow =
+                a &&
+                b &&
+                extractUserId(a.profile) === extractUserId(b.profile) &&
+                a.score === b.score;
+            if (!sameRow) diff++;
+            else if (a.displayName !== b.displayName) names++;
         }
         differs = diff;
+        namesDiffer = names;
     }
 
     let action: string;
@@ -159,6 +162,7 @@ for (const [key, snap] of latest) {
         'new players': newPlayers,
         'stored before': stored ? `${stored.players.length}${stored.final ? ' (final)' : ''}` : '-',
         'rows differing': differs,
+        'names differing': namesDiffer,
         action,
     };
 }
