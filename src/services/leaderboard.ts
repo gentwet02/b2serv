@@ -136,7 +136,7 @@ export async function getLeaderboardPlayers(season: SeasonInfo, maxAgeMs = env.N
 /** Background, low priority: fetch every finished season not stored yet */
 async function warmPastSeasons() {
     const stored = await listFinalSeasonIds();
-    const missing = getSeasons().filter((s) => !s.live && !stored.has(s.seasonId));
+    const missing = getSeasons().filter((s) => !s.live && !s.archived && !stored.has(s.seasonId));
     if (missing.length === 0) return;
 
     logger.debug(

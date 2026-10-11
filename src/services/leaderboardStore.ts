@@ -149,6 +149,16 @@ export async function storeLeaderboard(
     }
 }
 
+/** Every season id with a stored leaderboard */
+export async function listStoredSeasonIds(): Promise<number[]> {
+    try {
+        return (await collection().distinct('seasonId')) as number[];
+    } catch (error) {
+        logger.error(`Listing stored season ids failed: ${error}`);
+        return [];
+    }
+}
+
 /** Season ids already stored as final, to skip them when warming up */
 export async function listFinalSeasonIds(): Promise<Set<number>> {
     try {

@@ -1,4 +1,6 @@
+import mongoose from 'mongoose';
 import { env } from '@/config/environment';
+import { listStoredSeasonIds } from '@/services/leaderboardStore';
 import { fetchSeasons } from '@/services/ninjakiwi';
 import type { Season } from '@/types/season';
 import { logger } from '@/utils/logger';
@@ -6,6 +8,8 @@ import { scheduleEvery } from '@/utils/scheduler';
 
 export interface SeasonInfo extends Season {
     seasonId: number;
+    /** not listed by NK anymore, known only from our own data */
+    archived?: boolean;
 }
 
 const state = {
@@ -20,6 +24,60 @@ export function toSeasonId(season: Season): number | null {
 
     const fromName = String(season.name ?? '').match(/\d+/);
     return fromName ? Number(fromName[0]) - 1 : null;
+}
+
+/** Seasons we have data for (matches or a leaderboard). Computed once: they don't change. */
+let storedIds: Promise<Set<number>> | null = null;
+const archivedCache = new Map<number, SeasonInfo>();
+
+function loadStoredIds(): Promise<Set<number>> {
+    storedIds ??= (async () => {
+        const db = mongoose.connection.db;
+        if (!db) throw new Error('database not connected');
+        const ids = new Set<number>(await listStoredSeasonIds());
+        for (const { name } of await db.listCollections({}, { nameOnly: true }).toArray()) {
+            const match = name.match(/^matches_s(\d+)$/);
+            if (match) ids.add(Number(match[1]));
+        }
+        return ids;
+    })().catch((error) => {
+        storedIds = null;
+        logger.error(`Listing stored seasons failed: ${error}`);
+        return new Set<number>();
+    });
+    return storedIds;
+}
+
+async function archivedSeason(seasonId: number): Promise<SeasonInfo> {
+    const cached = archivedCache.get(seasonId);
+    if (cached) return cached;
+
+    const matches = mongoose.connection.collection<{ t: number }>(`matches_s${seasonId}`);
+    const [first, last] = await Promise.all([
+        matches
+            .find({}, { projection: { t: 1 } })
+            .sort({ t: 1 })
+            .limit(1)
+            .next(),
+        matches
+            .find({}, { projection: { t: 1 } })
+            .sort({ t: -1 })
+            .limit(1)
+            .next(),
+    ]);
+    const info: SeasonInfo = {
+        id: `archived-${seasonId}`,
+        name: `Season ${seasonId + 1}`,
+        start: first ? first.t * 60_000 : 0,
+        end: last ? last.t * 60_000 : 0,
+        live: false,
+        totalScores: 0,
+        leaderboard: '' as Season['leaderboard'],
+        seasonId,
+        archived: true,
+    };
+    archivedCache.set(seasonId, info);
+    return info;
 }
 
 export async function refreshSeasons() {
@@ -42,12 +100,21 @@ export async function refreshSeasons() {
         seasons.push({ ...season, seasonId });
     }
 
+    const listed = new Set(seasons.map((s) => s.seasonId));
+    const missing = [...(await loadStoredIds())].filter((id) => !listed.has(id));
+    try {
+        seasons.push(...(await Promise.all(missing.map(archivedSeason))));
+    } catch (error) {
+        logger.error(`Building archived seasons failed: ${error}`);
+    }
+
     state.seasons = seasons.sort((a, b) => b.seasonId - a.seasonId);
-    state.live = state.seasons.find((s) => s.live) ?? state.seasons[0] ?? null;
+    state.live =
+        state.seasons.find((s) => s.live) ?? state.seasons.find((s) => !s.archived) ?? null;
     state.lastFetch = new Date();
 
     logger.debug(
-        `Seasons: [${state.seasons.map((s) => s.seasonId).join(', ')}] live: ${state.live?.seasonId ?? 'none'}`,
+        `Seasons: [${state.seasons.map((s) => `${s.seasonId}${s.archived ? 'a' : ''}`).join(', ')}] live: ${state.live?.seasonId ?? 'none'}`,
     );
 }
 

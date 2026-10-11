@@ -87,5 +87,6 @@ export const playerNames: { [key: string]: string } = {
     '9fb74582d89ff1f31b43dc4b0a20b073c5031ab997458a3b': 'XTheMonkey',
     '9fb84382d997aaa71f148e495b71b07ec4014bb89941d038': 'Yapper',
     '9fbe4683dfc2fff34b138b435b7be27f9a504cb8cd198d3f': 'Yeetboy',
+    '9fbf1e8e8dc3ada34d138d1f5625e375cf521aed9f448d39': 'Yellow',
     '9fb942dedfc5adf01e4a8c485672b3229f0014be96468b6c': 'YMX',
 } as const;
