@@ -276,10 +276,10 @@ try {
 
         let batch = batches.get(seasonId);
         if (!batch) batches.set(seasonId, (batch = new Map()));
-        batch.set(match.id, {
-            match,
-            t: dateMs !== undefined ? Math.floor(dateMs / 60_000) : undefined,
-        });
+        const endMin = window ? Math.floor(window.end / 60_000) : undefined;
+        let t = dateMs !== undefined ? Math.floor(dateMs / 60_000) : undefined;
+        if (t !== undefined && endMin !== undefined && t > endMin) t = endMin; // fetched after the season ended
+        batch.set(match.id, { match, t });
         if (batch.size >= batchSize) await flush(seasonId);
     }
     for (const seasonId of [...batches.keys()]) await flush(seasonId);
