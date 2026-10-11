@@ -45,9 +45,52 @@ const playerByUser = new Map<string, number>();
 const playerByCode = new Map<number, { u: string; n: string }>();
 
 let ready: Promise<void> | null = null;
+let syncing: Promise<void> | null = null;
+let lastSync = 0;
+/** highest player code held in memory: player codes only grow, so newer ones are above it */
+let maxPlayerCode = -1;
 
-/** Loads both dictionaries in memory (once). */
-export function loadCodeBook(): Promise<void> {
+/** How often the server re-reads what other processes (import scripts) added. */
+const SYNC_EVERY_MS = 60_000;
+
+function addCode(_id: string, c: number) {
+    const [kind, ...rest] = _id.split(':');
+    if (!kinds.includes(kind as CodeKind)) return;
+    const name = rest.join(':');
+    byName[kind as CodeKind].set(name, c);
+    byCode[kind as CodeKind].set(c, name);
+}
+
+function addPlayer({ _id, u, n }: PlayerDoc) {
+    playerByUser.set(u, _id);
+    playerByCode.set(_id, { u, n });
+    if (_id > maxPlayerCode) maxPlayerCode = _id;
+}
+
+function syncCodeBook(): Promise<void> {
+    syncing ??= (async () => {
+        const [codes, players] = await Promise.all([
+            codesCollection()
+                .find({ _id: { $not: /^next:/ } })
+                .toArray(),
+            playersCollection()
+                .find({ _id: { $gt: maxPlayerCode } })
+                .toArray(),
+        ]);
+        for (const { _id, c } of codes) addCode(_id, c);
+        for (const player of players) addPlayer(player);
+        lastSync = Date.now();
+        if (players.length > 0) logger.info(`Code book: ${players.length} new player(s) picked up`);
+    })()
+        .catch((error) => logger.error(`Code book sync failed: ${error}`))
+        .finally(() => {
+            syncing = null;
+        });
+    return syncing;
+}
+
+/** Loads both dictionaries in memory (once), then keeps them in step with the database. */
+export async function loadCodeBook(): Promise<void> {
     ready ??= (async () => {
         const [codes, players] = await Promise.all([
             codesCollection()
@@ -55,24 +98,17 @@ export function loadCodeBook(): Promise<void> {
                 .toArray(),
             playersCollection().find({}).toArray(),
         ]);
-        for (const { _id, c } of codes) {
-            const [kind, ...rest] = _id.split(':');
-            if (!kinds.includes(kind as CodeKind)) continue;
-            const name = rest.join(':');
-            byName[kind as CodeKind].set(name, c);
-            byCode[kind as CodeKind].set(c, name);
-        }
-        for (const { _id, u, n } of players) {
-            playerByUser.set(u, _id);
-            playerByCode.set(_id, { u, n });
-        }
+        for (const { _id, c } of codes) addCode(_id, c);
+        for (const player of players) addPlayer(player);
+        lastSync = Date.now();
         await playersCollection().createIndex({ u: 1 }, { unique: true });
         logger.debug(`Code book: ${codes.length} codes, ${players.length} players`);
     })().catch((error) => {
         ready = null;
         throw error;
     });
-    return ready;
+    await ready;
+    if (Date.now() - lastSync > SYNC_EVERY_MS) await syncCodeBook();
 }
 
 // one writer at a time, so two batches never hand out the same number
@@ -167,10 +203,7 @@ export function ensurePlayers(
                     .toArray();
                 docs.splice(0, docs.length, ...existing);
             }
-            for (const { _id, u, n } of docs) {
-                playerByUser.set(u, _id);
-                playerByCode.set(_id, { u, n });
-            }
+            for (const doc of docs) addPlayer(doc);
         }
         if (renamed.length > 0) {
             await playersCollection().bulkWrite(
