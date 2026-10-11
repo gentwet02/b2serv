@@ -160,7 +160,11 @@ const roundExpr = bitsOf('$d', D.round, ROUND_BITS);
 // Writing
 // ---------------------------------------------------------------------------
 
-export async function saveCrawledMatches(matches: Match[], seasonId: number) {
+export async function saveCrawledMatches(
+    matches: Match[],
+    seasonId: number,
+    seenAt?: (match: Match) => number | undefined,
+) {
     if (matches.length === 0) return { inserted: 0, invalid: 0 };
     await loadCodeBook();
     await ensureIndexes(seasonId);
@@ -186,7 +190,7 @@ export async function saveCrawledMatches(matches: Match[], seasonId: number) {
         ensurePlayers(sides.map((p) => [extractUserId(p.profileURL), p.displayName])),
     ]);
 
-    const t = Math.floor(Date.now() / 60_000);
+    const now = Math.floor(Date.now() / 60_000);
     const docs: StoredMatchDoc[] = [];
     let invalid = 0;
     for (const match of matches) {
@@ -206,14 +210,20 @@ export async function saveCrawledMatches(matches: Match[], seasonId: number) {
             invalid++;
             continue;
         }
+        const seen = seenAt?.(match);
+        const t = seen !== undefined && Number.isInteger(seen) && seen > 0 ? seen : now;
         docs.push({ _id: packId(match.id), t, a, b, x, y, d });
     }
     if (invalid > 0) logger.warn(`${invalid} match(es) skipped: missing data or code out of range`);
     if (docs.length === 0) return { inserted: 0, invalid };
 
     const result = await collection(seasonId).bulkWrite(
-        docs.map((doc) => ({
-            updateOne: { filter: { _id: doc._id }, update: { $setOnInsert: doc }, upsert: true },
+        docs.map(({ t, ...doc }) => ({
+            updateOne: {
+                filter: { _id: doc._id },
+                update: { $setOnInsert: doc, $min: { t } },
+                upsert: true,
+            },
         })),
         { ordered: false },
     );
