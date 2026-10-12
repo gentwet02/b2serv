@@ -1,10 +1,11 @@
 import { Hono, type Context } from 'hono';
-import { getRankHistory } from '@/services/leaderboard';
-import { getSeasonStats } from '@/services/matchStore';
+import { ensureLeaderboard, getRankHistory } from '@/services/leaderboard';
+import { getSeasonStats, headToHead, OpponentInput } from '@/services/matchStore';
 import { getPlayerData } from '@/services/playerData';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
 import { logger } from '@/utils/logger';
 import { fixProfileAssets } from '@/utils/assets';
+import { extractUserId } from '@/utils/helpers';
 
 /**
  * Player data for the client. The browser never calls Ninja Kiwi itself.
@@ -13,6 +14,7 @@ import { fixProfileAssets } from '@/utils/assets';
  * GET /users/:id/matches   NK recent matches (fallback when we stored none)
  * GET /users/:id/season    season record from the stored matches
  * GET /users/:id/ranks     rank in every stored season, best end-of-season finish
+ * GET /users/:id/compare   the player against the season's top 10, or ?with=id1,id2…
  */
 export const users = new Hono();
 
@@ -57,6 +59,74 @@ users.get('/:id/season', async (c) => {
     } catch (error) {
         logger.error(`Season stats of ${id} failed: ${error}`);
         const message = 'Could not compute the season record.';
+        return c.json({ message, error: message }, 500);
+    }
+});
+
+const MAX_OPPONENTS = 10;
+
+/**
+ * GET /users/:id/compare: the player's games against each opponent (head to head)
+ *   ?season=46 | all      default: live season; "all" = every stored season
+ *   &with=id1,id2         up to 10 opponents, in this order; default: the top 10 (without the player)
+ */
+users.get('/:id/compare', async (c) => {
+    const id = c.req.param('id');
+    if (!USER_ID.test(id)) return invalid(c);
+    const seasonParam = c.req.query('season');
+    const all = seasonParam === 'all';
+    const live = getLiveSeason();
+    const season = all ? null : seasonParam ? getSeasonById(Number(seasonParam)) : live;
+    if (!all && !season) {
+        const message = seasonParam ? 'Unknown season' : 'Live season not available yet';
+        return c.json({ message, error: message }, seasonParam ? 404 : 503);
+    }
+
+    const picked = [
+        ...new Set(
+            (c.req.query('with') ?? '')
+                .split(',')
+                .map((s) => s.trim())
+                .filter((s) => USER_ID.test(s) && s !== id),
+        ),
+    ].slice(0, MAX_OPPONENTS);
+
+    try {
+        // ranks and default opponents: the season's leaderboard, the live one for "all"
+        const boardSeason = season ?? live;
+        const entry = boardSeason ? await ensureLeaderboard(boardSeason) : null;
+        const board = new Map(
+            (entry?.players ?? []).map((p, i) => [
+                extractUserId(p.profile),
+                { rank: i + 1, name: p.displayName },
+            ]),
+        );
+        const input = (userId: string): OpponentInput => ({
+            userId,
+            rank: board.get(userId)?.rank ?? null,
+            name: board.get(userId)?.name,
+        });
+
+        let opponents = picked;
+        if (opponents.length === 0) {
+            if (!entry) {
+                const message = "The leaderboard isn't available yet. Try again in a minute.";
+                return c.json({ message, error: message }, 503);
+            }
+            opponents = [...board.keys()].filter((u) => u !== id).slice(0, MAX_OPPONENTS);
+        }
+
+        const data = await headToHead(season?.seasonId ?? null, id, opponents.map(input));
+        c.header('Cache-Control', 'public, max-age=60');
+        return c.json({
+            ...data,
+            userId: id,
+            season: season ? season.seasonId : 'all',
+            seasonName: season ? season.name : 'All seasons',
+        });
+    } catch (error) {
+        logger.error(`Head to head of ${id} failed: ${error}`);
+        const message = 'Could not compute the head to head.';
         return c.json({ message, error: message }, 500);
     }
 });

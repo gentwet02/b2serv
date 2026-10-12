@@ -76,6 +76,7 @@ export const playerNames: { [key: string]: string } = {
     '9fb6138a8a9ffca14c46864e5f76b526c9061fe9c8118e3a': 'Poppuszka_alt',
     '9ce941ddd8c3afa61f44874b5876e77ec8561ebe9a15db6b': 'Prof. Gobbles',
     '9fb8158f8d96fcf64c418a4d5d76e4719e031db4cd13de30': 'Profi',
+    '9fb717da8a92a8f14a4adc4a0c71e2259e074cb89844da6a': 'Purple',
     '9cb81288db91faa51b4b8e1a5827b424cc0d1cbfc810896a': 'Rosco',
     '9fba438b8e96f0a04947de420d22e575cf071ceecf16893e': 'Rotten Potato',
     '9fb915dadd93f0a7114bdb1a0970e4249e521fba9810de6d': 'RR',

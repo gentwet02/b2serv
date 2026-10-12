@@ -736,7 +736,262 @@ export async function getSeasonStats(userId: string, seasonId: number) {
 }
 
 // ---------------------------------------------------------------------------
-// Storage report (Atlas free tier: 512 MB)
+// Head to head: a player against chosen opponents (profile card, compare page)
+// ---------------------------------------------------------------------------
+
+/** wins, losses, draws, always from the profile player's side */
+type Wld = [number, number, number];
+type WldIndex = 0 | 1 | 2;
+
+/** A map key or a loadout key ("Quincy|Alchemist,Druid,Ninja"), with the record on it. */
+interface H2hPick {
+    key: string;
+    record: Wld;
+}
+
+interface H2hTally {
+    record: Wld;
+    maps: Map<string, Wld>;
+    /** the profile player's loadouts in these games */
+    mine: Map<string, Wld>;
+    /** the opponent's loadouts in these games */
+    theirs: Map<string, Wld>;
+    /** last game, minutes since epoch */
+    last: number;
+}
+
+export interface OpponentInput {
+    userId: string;
+    rank: number | null;
+    /** leaderboard name, used when the server never stored a match of the player */
+    name?: string | undefined;
+}
+
+/**
+ * Below this many games a map or loadout can't be a best or a worst.
+ * Head-to-head samples are small: 2 against one opponent, 3 over all of them.
+ */
+export const H2H_MIN_GAMES = { opponent: 2, total: 3 } as const;
+
+const RESULT_INDEX: Record<string, WldIndex> = { win: 0, lose: 1, draw: 2 };
+
+const newH2hTally = (): H2hTally => ({
+    record: [0, 0, 0],
+    maps: new Map(),
+    mine: new Map(),
+    theirs: new Map(),
+    last: 0,
+});
+
+function bump(map: Map<string, Wld>, key: string, i: WldIndex) {
+    const record = map.get(key) ?? [0, 0, 0];
+    record[i]++;
+    map.set(key, record);
+}
+
+const gamesOf = (r: Wld) => r[0] + r[1] + r[2];
+const rateOf = (r: Wld) => (r[0] + r[1] > 0 ? r[0] / (r[0] + r[1]) : null);
+
+/** Best and worst win rate among the entries played at least `min` times. */
+function extremes(entries: Map<string, Wld>, min: number) {
+    const ok = [...entries].filter(([, r]) => gamesOf(r) >= min && rateOf(r) !== null);
+    if (ok.length === 0) return { best: null, worst: null };
+    const byRate = (dir: 1 | -1) => (p: [string, Wld], q: [string, Wld]) =>
+        dir * (rateOf(q[1])! - rateOf(p[1])!) || gamesOf(q[1]) - gamesOf(p[1]);
+    const [bestKey, bestRecord] = [...ok].sort(byRate(1))[0];
+    const [worstKey, worstRecord] = [...ok].sort(byRate(-1))[0];
+    const worse = rateOf(worstRecord)! < rateOf(bestRecord)!;
+    return {
+        best: { key: bestKey, record: bestRecord } as H2hPick,
+        // one entry, or all at the same rate: no worst
+        worst: worse ? ({ key: worstKey, record: worstRecord } as H2hPick) : null,
+    };
+}
+
+function mostPlayed(entries: Map<string, Wld>): H2hPick | null {
+    let top: H2hPick | null = null;
+    for (const [key, record] of entries) {
+        if (!top || gamesOf(record) > gamesOf(top.record)) top = { key, record };
+    }
+    return top;
+}
+
+function summarize(tally: H2hTally, min: number) {
+    const maps = extremes(tally.maps, min);
+    const mine = extremes(tally.mine, min);
+    const theirs = extremes(tally.theirs, min);
+    return {
+        record: tally.record,
+        lastMet: tally.last ? new Date(tally.last * 60_000).toISOString() : null,
+        maps: Object.fromEntries(tally.maps),
+        top: {
+            map: mostPlayed(tally.maps),
+            mine: mostPlayed(tally.mine),
+            theirs: mostPlayed(tally.theirs),
+        },
+        best: { map: maps.best, mine: mine.best, theirs: theirs.best },
+        worst: { map: maps.worst, mine: mine.worst, theirs: theirs.worst },
+    };
+}
+
+/** Seasons that have a matches collection, for "all seasons". Cached 10 minutes. */
+let storedSeasons: { ids: number[]; expires: number } | null = null;
+async function storedMatchSeasons(): Promise<number[]> {
+    if (storedSeasons && storedSeasons.expires > Date.now()) return storedSeasons.ids;
+    const db = mongoose.connection.db;
+    if (!db) return [];
+    const names = await db.listCollections({}, { nameOnly: true }).toArray();
+    const ids = names
+        .map((c) => /^matches_s(\d+)$/.exec(c.name)?.[1])
+        .filter((id): id is string => id !== undefined)
+        .map(Number)
+        .sort((a, b) => a - b);
+    storedSeasons = { ids, expires: Date.now() + 10 * 60_000 };
+    return ids;
+}
+
+const H2H_TTL_MS = 5 * 60_000;
+const h2hCache = new Map<
+    string,
+    { data: Awaited<ReturnType<typeof computeHeadToHead>>; expires: number }
+>();
+
+/**
+ * The profile player against each opponent: only the games they played against each other.
+ * `seasonId` null = every stored season. One indexed query per season; cached 5 minutes.
+ */
+export async function headToHead(
+    seasonId: number | null,
+    userId: string,
+    opponents: OpponentInput[],
+) {
+    const key = `${seasonId ?? 'all'}:${userId}:${opponents.map((o) => o.userId).join(',')}`;
+    const hit = h2hCache.get(key);
+    if (hit && hit.expires > Date.now()) return hit.data;
+
+    const data = await computeHeadToHead(seasonId, userId, opponents);
+    if (h2hCache.size > 300) h2hCache.clear();
+    h2hCache.set(key, { data, expires: Date.now() + H2H_TTL_MS });
+    return data;
+}
+
+async function computeHeadToHead(
+    seasonId: number | null,
+    userId: string,
+    opponents: OpponentInput[],
+) {
+    await loadCodeBook();
+    const known = knownHeroBases();
+    const baseCache = new Map<string, string>();
+    const baseOf = (hero: string) => {
+        let base = baseCache.get(hero);
+        if (base === undefined) {
+            base = heroBase(hero, known);
+            baseCache.set(hero, base);
+        }
+        return base;
+    };
+
+    const me = playerCodeOf(userId);
+    const tallies = new Map<number, H2hTally>();
+    for (const o of opponents) {
+        const code = playerCodeOf(o.userId);
+        if (code !== undefined && code !== me && !tallies.has(code))
+            tallies.set(code, newH2hTally());
+    }
+    const total = newH2hTally();
+    const codes = [...tallies.keys()];
+
+    const seasons = seasonId === null ? await storedMatchSeasons() : [seasonId];
+    const docs =
+        me === undefined || codes.length === 0
+            ? []
+            : (
+                  await Promise.all(
+                      seasons.map((s) =>
+                          collection(s)
+                              .find(
+                                  {
+                                      $or: [
+                                          { a: me, b: { $in: codes } },
+                                          { b: me, a: { $in: codes } },
+                                      ],
+                                  },
+                                  { projection: { t: 1, a: 1, b: 1, x: 1, y: 1, d: 1 } },
+                              )
+                              .toArray(),
+                      ),
+                  )
+              ).flat();
+
+    const mapNames = new Map<string, string>(); // key → a raw NK id, for the label and image
+    const heroVariants = new Map<string, string>(); // base → a raw NK id, for the portrait
+    const loadoutKey = (loadout: number) => {
+        const { hero, towers } = unpackLoadout(loadout);
+        const base = baseOf(hero);
+        if (!heroVariants.has(base) || hero === base) heroVariants.set(base, hero);
+        return `${base}|${[...towers].sort().join(',')}`;
+    };
+
+    for (const doc of docs) {
+        const left = doc.a === me;
+        const tally = tallies.get(left ? doc.b : doc.a);
+        if (!tally) continue;
+        const leftResult = nameOf('result', doc.d % 2 ** CODE_BITS.result);
+        const result = left ? leftResult : (opposingResult[leftResult] ?? leftResult);
+        const i = RESULT_INDEX[result];
+        if (i === undefined) continue; // cancelled / lobby disconnect: not played
+
+        const rawMap = nameOf('map', Math.floor(doc.d / 2 ** D.map) % 2 ** CODE_BITS.map);
+        const map = mapKey(rawMap);
+        if (!mapNames.has(map)) mapNames.set(map, rawMap);
+        const mine = loadoutKey(left ? doc.x : doc.y);
+        const theirs = loadoutKey(left ? doc.y : doc.x);
+
+        for (const t of [tally, total]) {
+            t.record[i]++;
+            bump(t.maps, map, i);
+            bump(t.mine, mine, i);
+            bump(t.theirs, theirs, i);
+            t.last = Math.max(t.last, doc.t);
+        }
+    }
+
+    const mapLabels: Record<string, { map: string; image: string | null }> = {};
+    for (const [key, map] of mapNames) {
+        mapLabels[key] = { map, image: (await getAssetUrl('map', map)) ?? null };
+    }
+    const heroLabels: Record<string, { hero: string; portrait: string | null }> = {};
+    for (const [base, hero] of heroVariants) {
+        heroLabels[base] = {
+            hero,
+            portrait:
+                (await getAssetUrl('hero', base)) ?? (await getAssetUrl('hero', hero)) ?? null,
+        };
+    }
+
+    return {
+        minGames: H2H_MIN_GAMES,
+        labels: { maps: mapLabels, heroes: heroLabels },
+        name: (me !== undefined ? playerOf(me)?.n : undefined) ?? null,
+        realName: playerNames[userId] ?? null,
+        total: summarize(total, H2H_MIN_GAMES.total),
+        opponents: opponents.map((o) => {
+            const code = playerCodeOf(o.userId);
+            const tally = (code !== undefined && tallies.get(code)) || newH2hTally();
+            return {
+                userId: o.userId,
+                name: (code !== undefined ? playerOf(code)?.n : undefined) ?? o.name ?? null,
+                realName: playerNames[o.userId] ?? null,
+                rank: o.rank,
+                ...summarize(tally, H2H_MIN_GAMES.opponent),
+            };
+        }),
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Storage report
 // ---------------------------------------------------------------------------
 
 export async function getStorageReport() {
