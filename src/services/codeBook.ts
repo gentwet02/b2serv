@@ -6,7 +6,8 @@ import { logger } from '@/utils/logger';
  * Number codes for everything a stored match refers to, kept in MongoDB.
  *
  * `codes`         { _id: "hero:Quincy_Cyber", c: 5 }   and counters { _id: "next:hero", c: 27 }
- * `player_codes`  { _id: 1234, u: "<NK user id>", n: "<display name>" }
+ * `player_codes`  { _id: 1234, u: "<NK user id>", n: "<display name>", o: ["<older names>"] }
+ *                 n is the latest name seen, o every other name the player had (searchable)
  *
  * A name seen for the first time gets the next free number; a number is never reused
  * or changed. No hand-written list to keep in order, so a new hero, tower or map can't
@@ -27,6 +28,13 @@ interface PlayerDoc {
     _id: number;
     u: string;
     n: string;
+    o?: string[];
+}
+
+interface PlayerEntry {
+    u: string;
+    n: string;
+    o?: string[];
 }
 
 const codesCollection = () => mongoose.connection.collection<CodeDoc>('codes');
@@ -42,7 +50,7 @@ const byCode = Object.fromEntries(kinds.map((k) => [k, new Map<number, string>()
     Map<number, string>
 >;
 const playerByUser = new Map<string, number>();
-const playerByCode = new Map<number, { u: string; n: string }>();
+const playerByCode = new Map<number, PlayerEntry>();
 
 let ready: Promise<void> | null = null;
 let syncing: Promise<void> | null = null;
@@ -61,9 +69,9 @@ function addCode(_id: string, c: number) {
     byCode[kind as CodeKind].set(c, name);
 }
 
-function addPlayer({ _id, u, n }: PlayerDoc) {
+function addPlayer({ _id, u, n, o }: PlayerDoc) {
     playerByUser.set(u, _id);
-    playerByCode.set(_id, { u, n });
+    playerByCode.set(_id, o?.length ? { u, n, o } : { u, n });
     if (_id > maxPlayerCode) maxPlayerCode = _id;
 }
 
@@ -173,27 +181,47 @@ export function ensureCodes(kind: CodeKind, names: Iterable<string>): Promise<vo
     });
 }
 
-/** Makes sure every player has a code, and keeps display names current. */
+/** true when `name` is neither the player's current name nor one of their older ones */
+const isNewName = (player: PlayerEntry, name: string) =>
+    player.n !== name && !(player.o ?? []).includes(name);
+
+/**
+ * Makes sure every player has a code, and keeps every name they went by.
+ *  rename: true   live data: the name becomes current, the previous one is kept in `o`
+ *  rename: false  old data: the current name stays, the old one is added to `o`
+ */
 export function ensurePlayers(
     entries: Iterable<[userId: string, displayName: string]>,
     { rename = true }: { rename?: boolean } = {},
 ): Promise<void> {
-    const latest = new Map<string, string>();
-    for (const [userId, name] of entries) if (userId) latest.set(userId, name || 'Unknown player');
+    // every distinct name per player (old data can list several for one season)
+    const seen = new Map<string, string[]>();
+    for (const [userId, name] of entries) {
+        if (!userId) continue;
+        const names = seen.get(userId) ?? [];
+        const clean = name || 'Unknown player';
+        if (!names.includes(clean)) names.push(clean);
+        seen.set(userId, names);
+    }
 
-    const missing = [...latest.keys()].filter((u) => !playerByUser.has(u));
-    const renamed = rename
-        ? [...latest].filter(
-              ([u, n]) => playerByUser.has(u) && playerByCode.get(playerByUser.get(u)!)?.n !== n,
-          )
-        : [];
-    if (missing.length === 0 && renamed.length === 0) return Promise.resolve();
+    const changed = (u: string) => {
+        const player = playerOf(playerByUser.get(u)!);
+        return !!player && seen.get(u)!.some((name) => isNewName(player, name));
+    };
+    const missing = [...seen.keys()].filter((u) => !playerByUser.has(u));
+    const known = [...seen.keys()].filter((u) => playerByUser.has(u) && changed(u));
+    if (missing.length === 0 && known.length === 0) return Promise.resolve();
 
     return serialized(async () => {
         const toAdd = missing.filter((u) => !playerByUser.has(u));
         if (toAdd.length > 0) {
             const first = await reserve('next:player', toAdd.length);
-            const docs = toAdd.map((u, i) => ({ _id: first + i, u, n: latest.get(u)! }));
+            const docs: PlayerDoc[] = toAdd.map((u, i) => {
+                const names = seen.get(u)!;
+                const n = rename ? names.at(-1)! : names[0]!;
+                const o = names.filter((name) => name !== n);
+                return o.length ? { _id: first + i, u, n, o } : { _id: first + i, u, n };
+            });
             try {
                 await playersCollection().insertMany(docs, { ordered: false });
             } catch (error) {
@@ -205,14 +233,42 @@ export function ensurePlayers(
             }
             for (const doc of docs) addPlayer(doc);
         }
-        if (renamed.length > 0) {
-            await playersCollection().bulkWrite(
-                renamed.map(([u, n]) => ({
-                    updateOne: { filter: { u }, update: { $set: { n } } },
-                })),
-                { ordered: false },
-            );
-            for (const [u, n] of renamed) playerByCode.set(playerByUser.get(u)!, { u, n });
+
+        const updates: { u: string; set?: string; add: string[] }[] = [];
+        for (const u of known) {
+            const code = playerByUser.get(u)!;
+            const player = playerOf(code);
+            if (!player) continue;
+            const fresh = seen.get(u)!.filter((name) => isNewName(player, name));
+            if (fresh.length === 0) continue;
+            if (rename) {
+                const n = fresh.at(-1)!;
+                const add = [player.n, ...fresh.filter((name) => name !== n)];
+                updates.push({ u, set: n, add });
+            } else {
+                updates.push({ u, add: fresh });
+            }
+        }
+        if (updates.length === 0) return;
+
+        await playersCollection().bulkWrite(
+            updates.map(({ u, set, add }) => ({
+                updateOne: {
+                    filter: { u },
+                    update: {
+                        ...(set !== undefined && { $set: { n: set } }),
+                        $addToSet: { o: { $each: add } },
+                    },
+                },
+            })),
+            { ordered: false },
+        );
+        for (const { u, set, add } of updates) {
+            const code = playerByUser.get(u)!;
+            const player = playerOf(code)!;
+            const n = set ?? player.n;
+            const o = [...new Set([...(player.o ?? []), ...add])].filter((name) => name !== n);
+            playerByCode.set(code, o.length ? { u, n, o } : { u, n });
         }
     });
 }
@@ -229,9 +285,9 @@ export function findPlayerCodes(term: string): number[] {
     const needle = term.trim().toLowerCase();
     if (!needle) return [];
     const codes: number[] = [];
-    for (const [code, { u, n }] of playerByCode) {
-        if (n.toLowerCase().includes(needle) || playerNames[u]?.toLowerCase().includes(needle))
-            codes.push(code);
+    const hit = (name: string | undefined) => !!name && name.toLowerCase().includes(needle);
+    for (const [code, { u, n, o }] of playerByCode) {
+        if (hit(n) || hit(playerNames[u]) || o?.some(hit)) codes.push(code);
     }
     return codes;
 }
