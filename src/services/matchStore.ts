@@ -735,8 +735,7 @@ export async function getSeasonStats(userId: string, seasonId: number) {
     };
 }
 
-// ---------------------------------------------------------------------------
-// Head to head: a player against chosen opponents (profile card, compare page)
+// Head to head: a player against other players, only the games they played each other
 // ---------------------------------------------------------------------------
 
 /** wins, losses, draws, always from the profile player's side */
@@ -769,7 +768,7 @@ export interface OpponentInput {
 
 /**
  * Below this many games a map or loadout can't be a best or a worst.
- * Head-to-head samples are small: 2 against one opponent, 3 over all of them.
+ * Head-to-head samples are small: 2 against one opponent, 3 over a group.
  */
 export const H2H_MIN_GAMES = { opponent: 2, total: 3 } as const;
 
@@ -783,7 +782,7 @@ const newH2hTally = (): H2hTally => ({
     last: 0,
 });
 
-function bump(map: Map<string, Wld>, key: string, i: WldIndex) {
+function bump<K>(map: Map<K, Wld>, key: K, i: WldIndex) {
     const record = map.get(key) ?? [0, 0, 0];
     record[i]++;
     map.set(key, record);
@@ -816,6 +815,13 @@ function mostPlayed(entries: Map<string, Wld>): H2hPick | null {
     return top;
 }
 
+/** Entries as a list, most played first. */
+const byGames = (entries: Map<string, Wld>, limit = Infinity): H2hPick[] =>
+    [...entries]
+        .map(([key, record]) => ({ key, record }))
+        .sort((a, b) => gamesOf(b.record) - gamesOf(a.record))
+        .slice(0, limit);
+
 function summarize(tally: H2hTally, min: number) {
     const maps = extremes(tally.maps, min);
     const mine = extremes(tally.mine, min);
@@ -834,9 +840,89 @@ function summarize(tally: H2hTally, min: number) {
     };
 }
 
-/** Seasons that have a matches collection, for "all seasons". Cached 10 minutes. */
+/** Map and loadout keys of a set of games, and the labels / images the client needs for them. */
+function labeler() {
+    const known = knownHeroBases();
+    const bases = new Map<string, string>();
+    const mapNames = new Map<string, string>(); // key → a raw NK id
+    const heroVariants = new Map<string, string>(); // base → a raw NK id
+
+    const baseOf = (hero: string) => {
+        let base = bases.get(hero);
+        if (base === undefined) {
+            base = heroBase(hero, known);
+            bases.set(hero, base);
+        }
+        return base;
+    };
+
+    return {
+        map(d: number) {
+            const raw = nameOf('map', Math.floor(d / 2 ** D.map) % 2 ** CODE_BITS.map);
+            const key = mapKey(raw);
+            if (!mapNames.has(key)) mapNames.set(key, raw);
+            return key;
+        },
+        loadout(loadout: number) {
+            const { hero, towers } = unpackLoadout(loadout);
+            const base = baseOf(hero);
+            if (!heroVariants.has(base) || hero === base) heroVariants.set(base, hero);
+            return `${base}|${[...towers].sort().join(',')}`;
+        },
+        async labels() {
+            const maps: Record<string, { map: string; image: string | null }> = {};
+            for (const [key, map] of mapNames) {
+                maps[key] = { map, image: (await getAssetUrl('map', map)) ?? null };
+            }
+            const heroes: Record<string, { hero: string; portrait: string | null }> = {};
+            for (const [base, hero] of heroVariants) {
+                heroes[base] = {
+                    hero,
+                    portrait:
+                        (await getAssetUrl('hero', base)) ??
+                        (await getAssetUrl('hero', hero)) ??
+                        null,
+                };
+            }
+            return { maps, heroes };
+        },
+    };
+}
+
+/** Result of a stored game from the player's side, or undefined when it wasn't played. */
+function resultFor(doc: StoredMatchDoc, left: boolean): WldIndex | undefined {
+    const leftResult = nameOf('result', doc.d % 2 ** CODE_BITS.result);
+    return RESULT_INDEX[left ? leftResult : (opposingResult[leftResult] ?? leftResult)];
+}
+
+/** One tally for every game of a set (maps, both loadouts, last game). */
+function count(tally: H2hTally, i: WldIndex, map: string, mine: string, theirs: string, t: number) {
+    tally.record[i]++;
+    bump(tally.maps, map, i);
+    bump(tally.mine, mine, i);
+    bump(tally.theirs, theirs, i);
+    tally.last = Math.max(tally.last, t);
+}
+
+/** Games of `me` against any of `codes` in a season. */
+function gamesAgainst(seasonId: number, me: number, codes: number[]) {
+    if (codes.length === 0) return Promise.resolve([] as StoredMatchDoc[]);
+    return collection(seasonId)
+        .find(
+            {
+                $or: [
+                    { a: me, b: { $in: codes } },
+                    { b: me, a: { $in: codes } },
+                ],
+            },
+            { projection: { t: 1, a: 1, b: 1, x: 1, y: 1, d: 1 } },
+        )
+        .toArray();
+}
+
+/** Seasons that have a matches collection, oldest first. Cached 10 minutes. */
 let storedSeasons: { ids: number[]; expires: number } | null = null;
-async function storedMatchSeasons(): Promise<number[]> {
+export async function listMatchSeasons(): Promise<number[]> {
     if (storedSeasons && storedSeasons.expires > Date.now()) return storedSeasons.ids;
     const db = mongoose.connection.db;
     if (!db) return [];
@@ -850,29 +936,32 @@ async function storedMatchSeasons(): Promise<number[]> {
     return ids;
 }
 
+/** Small 5-minute cache shared by the head-to-head reads. */
 const H2H_TTL_MS = 5 * 60_000;
-const h2hCache = new Map<
-    string,
-    { data: Awaited<ReturnType<typeof computeHeadToHead>>; expires: number }
->();
-
-/**
- * The profile player against each opponent: only the games they played against each other.
- * `seasonId` null = every stored season. One indexed query per season; cached 5 minutes.
- */
-export async function headToHead(
-    seasonId: number | null,
-    userId: string,
-    opponents: OpponentInput[],
-) {
-    const key = `${seasonId ?? 'all'}:${userId}:${opponents.map((o) => o.userId).join(',')}`;
+const h2hCache = new Map<string, { data: unknown; expires: number }>();
+async function cached<T>(key: string, compute: () => Promise<T>): Promise<T> {
     const hit = h2hCache.get(key);
-    if (hit && hit.expires > Date.now()) return hit.data;
-
-    const data = await computeHeadToHead(seasonId, userId, opponents);
+    if (hit && hit.expires > Date.now()) return hit.data as T;
+    const data = await compute();
     if (h2hCache.size > 300) h2hCache.clear();
     h2hCache.set(key, { data, expires: Date.now() + H2H_TTL_MS });
     return data;
+}
+
+const nameOfUser = (userId: string, fallback?: string) => {
+    const code = playerCodeOf(userId);
+    return (code !== undefined ? playerOf(code)?.n : undefined) ?? fallback ?? null;
+};
+
+// ---------- Profile card: 10 opponents, one row each ----------
+
+/**
+ * The profile player against each opponent. `seasonId` null = every stored season.
+ * One indexed query per season; cached 5 minutes.
+ */
+export function headToHead(seasonId: number | null, userId: string, opponents: OpponentInput[]) {
+    const key = `card:${seasonId ?? 'all'}:${userId}:${opponents.map((o) => o.userId).join(',')}`;
+    return cached(key, () => computeHeadToHead(seasonId, userId, opponents));
 }
 
 async function computeHeadToHead(
@@ -881,17 +970,6 @@ async function computeHeadToHead(
     opponents: OpponentInput[],
 ) {
     await loadCodeBook();
-    const known = knownHeroBases();
-    const baseCache = new Map<string, string>();
-    const baseOf = (hero: string) => {
-        let base = baseCache.get(hero);
-        if (base === undefined) {
-            base = heroBase(hero, known);
-            baseCache.set(hero, base);
-        }
-        return base;
-    };
-
     const me = playerCodeOf(userId);
     const tallies = new Map<number, H2hTally>();
     for (const o of opponents) {
@@ -901,79 +979,30 @@ async function computeHeadToHead(
     }
     const total = newH2hTally();
     const codes = [...tallies.keys()];
+    const label = labeler();
 
-    const seasons = seasonId === null ? await storedMatchSeasons() : [seasonId];
+    const seasons = seasonId === null ? await listMatchSeasons() : [seasonId];
     const docs =
-        me === undefined || codes.length === 0
+        me === undefined
             ? []
-            : (
-                  await Promise.all(
-                      seasons.map((s) =>
-                          collection(s)
-                              .find(
-                                  {
-                                      $or: [
-                                          { a: me, b: { $in: codes } },
-                                          { b: me, a: { $in: codes } },
-                                      ],
-                                  },
-                                  { projection: { t: 1, a: 1, b: 1, x: 1, y: 1, d: 1 } },
-                              )
-                              .toArray(),
-                      ),
-                  )
-              ).flat();
-
-    const mapNames = new Map<string, string>(); // key → a raw NK id, for the label and image
-    const heroVariants = new Map<string, string>(); // base → a raw NK id, for the portrait
-    const loadoutKey = (loadout: number) => {
-        const { hero, towers } = unpackLoadout(loadout);
-        const base = baseOf(hero);
-        if (!heroVariants.has(base) || hero === base) heroVariants.set(base, hero);
-        return `${base}|${[...towers].sort().join(',')}`;
-    };
+            : (await Promise.all(seasons.map((s) => gamesAgainst(s, me, codes)))).flat();
 
     for (const doc of docs) {
         const left = doc.a === me;
         const tally = tallies.get(left ? doc.b : doc.a);
-        if (!tally) continue;
-        const leftResult = nameOf('result', doc.d % 2 ** CODE_BITS.result);
-        const result = left ? leftResult : (opposingResult[leftResult] ?? leftResult);
-        const i = RESULT_INDEX[result];
-        if (i === undefined) continue; // cancelled / lobby disconnect: not played
-
-        const rawMap = nameOf('map', Math.floor(doc.d / 2 ** D.map) % 2 ** CODE_BITS.map);
-        const map = mapKey(rawMap);
-        if (!mapNames.has(map)) mapNames.set(map, rawMap);
-        const mine = loadoutKey(left ? doc.x : doc.y);
-        const theirs = loadoutKey(left ? doc.y : doc.x);
-
-        for (const t of [tally, total]) {
-            t.record[i]++;
-            bump(t.maps, map, i);
-            bump(t.mine, mine, i);
-            bump(t.theirs, theirs, i);
-            t.last = Math.max(t.last, doc.t);
-        }
-    }
-
-    const mapLabels: Record<string, { map: string; image: string | null }> = {};
-    for (const [key, map] of mapNames) {
-        mapLabels[key] = { map, image: (await getAssetUrl('map', map)) ?? null };
-    }
-    const heroLabels: Record<string, { hero: string; portrait: string | null }> = {};
-    for (const [base, hero] of heroVariants) {
-        heroLabels[base] = {
-            hero,
-            portrait:
-                (await getAssetUrl('hero', base)) ?? (await getAssetUrl('hero', hero)) ?? null,
-        };
+        const i = resultFor(doc, left);
+        if (!tally || i === undefined) continue; // cancelled / lobby disconnect: not played
+        const map = label.map(doc.d);
+        const mine = label.loadout(left ? doc.x : doc.y);
+        const theirs = label.loadout(left ? doc.y : doc.x);
+        count(tally, i, map, mine, theirs, doc.t);
+        count(total, i, map, mine, theirs, doc.t);
     }
 
     return {
         minGames: H2H_MIN_GAMES,
-        labels: { maps: mapLabels, heroes: heroLabels },
-        name: (me !== undefined ? playerOf(me)?.n : undefined) ?? null,
+        labels: await label.labels(),
+        name: me !== undefined ? (playerOf(me)?.n ?? null) : null,
         realName: playerNames[userId] ?? null,
         total: summarize(total, H2H_MIN_GAMES.total),
         opponents: opponents.map((o) => {
@@ -981,13 +1010,195 @@ async function computeHeadToHead(
             const tally = (code !== undefined && tallies.get(code)) || newH2hTally();
             return {
                 userId: o.userId,
-                name: (code !== undefined ? playerOf(code)?.n : undefined) ?? o.name ?? null,
+                name: nameOfUser(o.userId, o.name),
                 realName: playerNames[o.userId] ?? null,
                 rank: o.rank,
                 ...summarize(tally, H2H_MIN_GAMES.opponent),
             };
         }),
     };
+}
+
+// ---------- Compare page: one player, or a top N per season ----------
+
+/** One season of a comparison and the opponents counted in it (rank in that season). */
+export interface VersusSeason {
+    seasonId: number;
+    name: string;
+    opponents: { userId: string; rank: number | null; name?: string | undefined }[];
+}
+
+/** How many of the latest games between two players come back with a one-player comparison. */
+const VERSUS_MATCHES = 30;
+/** Loadouts sent per side, most played first. */
+const VERSUS_LOADOUTS = 60;
+
+/**
+ * The player's games against the opponents of each season, counted only in that season
+ * (a top 25 of every season compares each season to its own top 25).
+ * `withMatches`: also the latest games themselves (one-player comparisons).
+ */
+export function versus(
+    userId: string,
+    seasons: VersusSeason[],
+    { withMatches = false, cacheKey }: { withMatches?: boolean; cacheKey: string },
+) {
+    return cached(`versus:${userId}:${cacheKey}`, () =>
+        computeVersus(userId, seasons, withMatches),
+    );
+}
+
+async function computeVersus(userId: string, seasons: VersusSeason[], withMatches: boolean) {
+    await loadCodeBook();
+    const me = playerCodeOf(userId);
+    const label = labeler();
+    const total = newH2hTally();
+
+    interface OpponentTally {
+        userId: string;
+        name: string | null;
+        bestRank: number | null;
+        /** seasons the player was part of the group */
+        seasons: number;
+        record: Wld;
+        last: number;
+    }
+    const opponents = new Map<string, OpponentTally>();
+    const perSeason: {
+        seasonId: number;
+        name: string;
+        group: number;
+        record: Wld;
+        last: number;
+    }[] = [];
+    const recent: StoredMatchDoc[] = [];
+
+    for (const season of seasons) {
+        const codeToUser = new Map<number, string>();
+        for (const o of season.opponents) {
+            if (o.userId === userId) continue;
+            const entry = opponents.get(o.userId) ?? {
+                userId: o.userId,
+                name: nameOfUser(o.userId, o.name),
+                bestRank: null,
+                seasons: 0,
+                record: [0, 0, 0] as Wld,
+                last: 0,
+            };
+            entry.seasons++;
+            if (o.rank !== null && (entry.bestRank === null || o.rank < entry.bestRank)) {
+                entry.bestRank = o.rank;
+            }
+            opponents.set(o.userId, entry);
+            const code = playerCodeOf(o.userId);
+            if (code !== undefined) codeToUser.set(code, o.userId);
+        }
+
+        const row = {
+            seasonId: season.seasonId,
+            name: season.name,
+            group: codeToUser.size,
+            record: [0, 0, 0] as Wld,
+            last: 0,
+        };
+        perSeason.push(row);
+        if (me === undefined) continue;
+
+        const docs = await gamesAgainst(season.seasonId, me, [...codeToUser.keys()]);
+        for (const doc of docs) {
+            const left = doc.a === me;
+            const opponent = opponents.get(codeToUser.get(left ? doc.b : doc.a) ?? '');
+            const i = resultFor(doc, left);
+            if (!opponent || i === undefined) continue;
+            count(
+                total,
+                i,
+                label.map(doc.d),
+                label.loadout(left ? doc.x : doc.y),
+                label.loadout(left ? doc.y : doc.x),
+                doc.t,
+            );
+            opponent.record[i]++;
+            opponent.last = Math.max(opponent.last, doc.t);
+            row.record[i]++;
+            row.last = Math.max(row.last, doc.t);
+            if (withMatches) recent.push(doc);
+        }
+    }
+
+    const iso = (t: number) => (t ? new Date(t * 60_000).toISOString() : null);
+    const matches = withMatches
+        ? await Promise.all(
+              recent
+                  .sort((a, b) => b.t - a.t)
+                  .slice(0, VERSUS_MATCHES)
+                  .map(toApiMatch),
+          )
+        : null;
+
+    return {
+        name: me !== undefined ? (playerOf(me)?.n ?? null) : null,
+        realName: playerNames[userId] ?? null,
+        minGames: H2H_MIN_GAMES,
+        labels: await label.labels(),
+        total: {
+            ...summarize(total, H2H_MIN_GAMES.total),
+            mapList: byGames(total.maps),
+            mine: byGames(total.mine, VERSUS_LOADOUTS),
+            theirs: byGames(total.theirs, VERSUS_LOADOUTS),
+        },
+        /** everyone in the group; never-met players have a 0–0 record */
+        opponents: [...opponents.values()]
+            .map((o) => ({
+                userId: o.userId,
+                name: o.name,
+                realName: playerNames[o.userId] ?? null,
+                rank: o.bestRank,
+                seasons: o.seasons,
+                record: o.record,
+                lastMet: iso(o.last),
+            }))
+            .sort(
+                (a, b) =>
+                    gamesOf(b.record) - gamesOf(a.record) ||
+                    (a.rank ?? Infinity) - (b.rank ?? Infinity),
+            ),
+        seasons: perSeason.map(({ last, ...s }) => ({ ...s, lastMet: iso(last) })).reverse(),
+        matches,
+    };
+}
+
+/** Everyone the player met in these seasons, most games first (the "pick a player" list). */
+export function opponentsMet(userId: string, seasonIds: number[]) {
+    return cached(`met:${userId}:${seasonIds.join(',')}`, async () => {
+        await loadCodeBook();
+        const me = playerCodeOf(userId);
+        if (me === undefined) return [];
+        const records = new Map<number, Wld>();
+        for (const seasonId of seasonIds) {
+            const docs = await collection(seasonId)
+                .find({ $or: [{ a: me }, { b: me }] }, { projection: { a: 1, b: 1, d: 1 } })
+                .toArray();
+            for (const doc of docs) {
+                const left = doc.a === me;
+                const i = resultFor(doc, left);
+                if (i !== undefined) bump(records, left ? doc.b : doc.a, i);
+            }
+        }
+        return [...records]
+            .map(([code, record]) => {
+                const player = playerOf(code);
+                return {
+                    userId: player?.u ?? '',
+                    name: player?.n ?? null,
+                    realName: playerNames[player?.u ?? ''] ?? null,
+                    record,
+                };
+            })
+            .filter((o) => o.userId && o.userId !== userId)
+            .sort((a, b) => gamesOf(b.record) - gamesOf(a.record))
+            .slice(0, 500);
+    });
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,19 @@
 import { Hono, type Context } from 'hono';
-import { ensureLeaderboard, getRankHistory } from '@/services/leaderboard';
-import { getSeasonStats, headToHead, OpponentInput } from '@/services/matchStore';
+import {
+    ensureLeaderboard,
+    getRankHistory,
+    getSeasonRank,
+    getTopPlayers,
+} from '@/services/leaderboard';
+import {
+    getSeasonStats,
+    headToHead,
+    listMatchSeasons,
+    OpponentInput,
+    opponentsMet,
+    versus,
+    VersusSeason,
+} from '@/services/matchStore';
 import { getPlayerData } from '@/services/playerData';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
 import { logger } from '@/utils/logger';
@@ -127,6 +140,109 @@ users.get('/:id/compare', async (c) => {
     } catch (error) {
         logger.error(`Head to head of ${id} failed: ${error}`);
         const message = 'Could not compute the head to head.';
+        return c.json({ message, error: message }, 500);
+    }
+});
+
+export const VERSUS_TOPS = [10, 25, 50, 100] as const;
+
+/** ?season=46 | all → the seasons asked for, newest last; null when unknown. */
+async function resolveSeasons(param: string | undefined) {
+    if (param === 'all') {
+        const stored = await listMatchSeasons();
+        return stored.map((id) => getSeasonById(id) ?? { seasonId: id, name: `Season ${id + 1}` });
+    }
+    const season = param ? getSeasonById(Number(param)) : getLiveSeason();
+    return season ? [season] : null;
+}
+
+/**
+ * GET /users/:id/versus: only the games the player played against these opponents
+ *   ?season=46 | all      default: live season
+ *   &vs=<id>              one opponent, with the latest games between them
+ *   &top=10|25|50|100     or: the top N of each season, counted in that season (default 10)
+ */
+users.get('/:id/versus', async (c) => {
+    const id = c.req.param('id');
+    if (!USER_ID.test(id)) return invalid(c);
+    const seasonParam = c.req.query('season');
+    const seasons = await resolveSeasons(seasonParam);
+    if (!seasons) {
+        const message = 'Unknown season';
+        return c.json({ message, error: message }, 404);
+    }
+
+    const vs = c.req.query('vs');
+    if (vs !== undefined && (!USER_ID.test(vs) || vs === id)) {
+        const message = 'Invalid opponent';
+        return c.json({ message, error: message }, 400);
+    }
+    const topParam = Number(c.req.query('top') ?? 10);
+    const top = (VERSUS_TOPS as readonly number[]).includes(topParam) ? topParam : 10;
+
+    try {
+        // one season: make sure its leaderboard is loaded (ranks, top N)
+        if (seasons.length === 1) {
+            const season = getSeasonById(seasons[0].seasonId);
+            if (season) await ensureLeaderboard(season);
+        }
+
+        const missing: number[] = [];
+        const groups: VersusSeason[] = seasons.map((season) => {
+            if (vs) {
+                return {
+                    seasonId: season.seasonId,
+                    name: season.name,
+                    opponents: [{ userId: vs, rank: getSeasonRank(season.seasonId, vs) }],
+                };
+            }
+            const players = getTopPlayers(season.seasonId, top);
+            if (!players) missing.push(season.seasonId);
+            return { seasonId: season.seasonId, name: season.name, opponents: players ?? [] };
+        });
+
+        const data = await versus(id, groups, {
+            withMatches: !!vs,
+            cacheKey: `${seasonParam ?? 'live'}:${vs ?? `top${top}`}`,
+        });
+        c.header('Cache-Control', 'public, max-age=60');
+        return c.json({
+            ...data,
+            userId: id,
+            season: seasonParam === 'all' ? 'all' : seasons[0].seasonId,
+            seasonName: seasonParam === 'all' ? 'All seasons' : seasons[0].name,
+            mode: vs ? 'player' : 'top',
+            vs: vs ?? null,
+            top: vs ? null : top,
+            /** seasons whose leaderboard the server doesn't have yet (top N mode) */
+            missingSeasons: missing,
+        });
+    } catch (error) {
+        logger.error(`Versus of ${id} failed: ${error}`);
+        const message = 'Could not compute the head to head.';
+        return c.json({ message, error: message }, 500);
+    }
+});
+
+/** GET /users/:id/opponents?season=46|all: everyone the player met, most games first. */
+users.get('/:id/opponents', async (c) => {
+    const id = c.req.param('id');
+    if (!USER_ID.test(id)) return invalid(c);
+    const seasons = await resolveSeasons(c.req.query('season'));
+    if (!seasons) {
+        const message = 'Unknown season';
+        return c.json({ message, error: message }, 404);
+    }
+    try {
+        const opponents = await opponentsMet(
+            id,
+            seasons.map((s) => s.seasonId),
+        );
+        c.header('Cache-Control', 'public, max-age=60');
+        return c.json({ opponents });
+    } catch (error) {
+        logger.error(`Opponents of ${id} failed: ${error}`);
+        const message = 'Could not list the opponents.';
         return c.json({ message, error: message }, 500);
     }
 });

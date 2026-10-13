@@ -44,7 +44,19 @@ function indexRanks(seasonId: number, players: LeaderboardPlayer[]) {
     );
 }
 
-/** A player's rank in every season we have, newest season first. */
+export function getTopPlayers(seasonId: number, n: number) {
+    const ranks = seasonRanks.get(seasonId);
+    if (!ranks) return null;
+    const top: { userId: string; rank: number }[] = [];
+    for (const [userId, { rank }] of ranks) {
+        if (rank <= n) top.push({ userId, rank });
+    }
+    return top.sort((a, b) => a.rank - b.rank);
+}
+
+export const getSeasonRank = (seasonId: number, userId: string) =>
+    seasonRanks.get(seasonId)?.get(userId)?.rank ?? null;
+
 export function getRankHistory(userId: string) {
     const live = getLiveSeason();
     const seasons = getSeasons();
