@@ -44,14 +44,17 @@ function indexRanks(seasonId: number, players: LeaderboardPlayer[]) {
     );
 }
 
-export function getTopPlayers(seasonId: number, n: number) {
+export const getLeaderboardSize = (seasonId: number) => seasonRanks.get(seasonId)?.size ?? null;
+
+/** Players ranked `from`–`to` (inclusive) in a season, or null when that leaderboard isn't loaded. */
+export function getRankRange(seasonId: number, from: number, to: number) {
     const ranks = seasonRanks.get(seasonId);
     if (!ranks) return null;
-    const top: { userId: string; rank: number }[] = [];
+    const players: { userId: string; rank: number }[] = [];
     for (const [userId, { rank }] of ranks) {
-        if (rank <= n) top.push({ userId, rank });
+        if (rank >= from && rank <= to) players.push({ userId, rank });
     }
-    return top.sort((a, b) => a.rank - b.rank);
+    return players.sort((a, b) => a.rank - b.rank);
 }
 
 export const getSeasonRank = (seasonId: number, userId: string) =>

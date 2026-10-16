@@ -28,6 +28,7 @@ import { extractUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 import { heroBase, mapKey } from '@/utils/matchLabels';
 import { HERO_BASES } from '@/data/towers';
+import { VersusSeason } from '@/types/season';
 
 /**
  * Compact match storage: one collection per season, `matches_s<season>`, 6 small numbers per match.
@@ -904,9 +905,18 @@ function count(tally: H2hTally, i: WldIndex, map: string, mine: string, theirs: 
     tally.last = Math.max(tally.last, t);
 }
 
-/** Games of `me` against any of `codes` in a season. */
-function gamesAgainst(seasonId: number, me: number, codes: number[]) {
-    if (codes.length === 0) return Promise.resolve([] as StoredMatchDoc[]);
+/** Games against any of `codes` in a season. */
+async function gamesAgainst(seasonId: number, me: number, codes: number[]) {
+    if (codes.length === 0) return [] as StoredMatchDoc[];
+    const projection = { t: 1, a: 1, b: 1, x: 1, y: 1, d: 1 };
+    // big groups (a whole leaderboard): all the player's games, filtered here
+    if (codes.length > 300) {
+        const wanted = new Set(codes);
+        const docs = await collection(seasonId)
+            .find({ $or: [{ a: me }, { b: me }] }, { projection })
+            .toArray();
+        return docs.filter((doc) => wanted.has(doc.a === me ? doc.b : doc.a));
+    }
     return collection(seasonId)
         .find(
             {
@@ -915,7 +925,7 @@ function gamesAgainst(seasonId: number, me: number, codes: number[]) {
                     { b: me, a: { $in: codes } },
                 ],
             },
-            { projection: { t: 1, a: 1, b: 1, x: 1, y: 1, d: 1 } },
+            { projection },
         )
         .toArray();
 }
@@ -1021,13 +1031,6 @@ async function computeHeadToHead(
 
 // ---------- Compare page: one player, or a top N per season ----------
 
-/** One season of a comparison and the opponents counted in it (rank in that season). */
-export interface VersusSeason {
-    seasonId: number;
-    name: string;
-    opponents: { userId: string; rank: number | null; name?: string | undefined }[];
-}
-
 /** How many of the latest games between two players come back with a one-player comparison. */
 const VERSUS_MATCHES = 30;
 /** Loadouts sent per side, most played first. */
@@ -1067,6 +1070,7 @@ async function computeVersus(userId: string, seasons: VersusSeason[], withMatche
     const perSeason: {
         seasonId: number;
         name: string;
+        bounds: VersusSeason['bounds'] | null;
         group: number;
         record: Wld;
         last: number;
@@ -1097,6 +1101,7 @@ async function computeVersus(userId: string, seasons: VersusSeason[], withMatche
         const row = {
             seasonId: season.seasonId,
             name: season.name,
+            bounds: season.bounds ?? null,
             group: codeToUser.size,
             record: [0, 0, 0] as Wld,
             last: 0,

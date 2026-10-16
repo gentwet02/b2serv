@@ -2,8 +2,9 @@ import { Hono, type Context } from 'hono';
 import {
     ensureLeaderboard,
     getRankHistory,
+    getLeaderboardSize,
+    getRankRange,
     getSeasonRank,
-    getTopPlayers,
 } from '@/services/leaderboard';
 import {
     getSeasonStats,
@@ -12,13 +13,13 @@ import {
     OpponentInput,
     opponentsMet,
     versus,
-    VersusSeason,
 } from '@/services/matchStore';
 import { getPlayerData } from '@/services/playerData';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
 import { logger } from '@/utils/logger';
 import { fixProfileAssets } from '@/utils/assets';
 import { extractUserId } from '@/utils/helpers';
+import { VersusSeason } from '@/types/season';
 
 /**
  * Player data for the client. The browser never calls Ninja Kiwi itself.
@@ -28,6 +29,8 @@ import { extractUserId } from '@/utils/helpers';
  * GET /users/:id/season    season record from the stored matches
  * GET /users/:id/ranks     rank in every stored season, best end-of-season finish
  * GET /users/:id/compare   the player against the season's top 10, or ?with=id1,id2…
+ * GET /users/:id/versus    head to head against one player or a leaderboard range
+ * GET /users/:id/opponents everyone the player met, most games first
  */
 export const users = new Hono();
 
@@ -144,7 +147,26 @@ users.get('/:id/compare', async (c) => {
     }
 });
 
-export const VERSUS_TOPS = [10, 25, 50, 100] as const;
+export const VERSUS_RANGES = ['t10', 't25', 't50', 't100', 't25p', 't50p', 't75p', 'all'] as const;
+type VersusRange = (typeof VERSUS_RANGES)[number];
+
+/** Players a range covers in a leaderboard of `size` players. */
+function rangeCount(range: VersusRange, size: number) {
+    if (range === 'all') return size;
+    if (range.endsWith('p')) return Math.ceil((size * Number(range.slice(1, -1))) / 100);
+    return Math.min(Number(range.slice(1)), size);
+}
+
+/**
+ * Ranks a range covers in one season. `band`: only the ranks below the next smaller
+ * threshold (top 25 → 11–25; top 25% of 1200 players → 101–300).
+ */
+function rangeBounds(range: VersusRange, band: boolean, size: number) {
+    const to = rangeCount(range, size);
+    if (!band) return { from: 1, to, size };
+    const below = VERSUS_RANGES.map((r) => rangeCount(r, size)).filter((n) => n < to);
+    return { from: (below.length ? Math.max(...below) : 0) + 1, to, size };
+}
 
 /** ?season=46 | all → the seasons asked for, newest last; null when unknown. */
 async function resolveSeasons(param: string | undefined) {
@@ -160,7 +182,9 @@ async function resolveSeasons(param: string | undefined) {
  * GET /users/:id/versus: only the games the player played against these opponents
  *   ?season=46 | all      default: live season
  *   &vs=<id>              one opponent, with the latest games between them
- *   &top=10|25|50|100     or: the top N of each season, counted in that season (default 10)
+ *   &range=t10|t25|t50|t100|t25p|t50p|t75p|all
+ *                         or: a range of each season's leaderboard, counted in that season
+ *   &band=1               only the ranks between the previous threshold and this one
  */
 users.get('/:id/versus', async (c) => {
     const id = c.req.param('id');
@@ -177,11 +201,14 @@ users.get('/:id/versus', async (c) => {
         const message = 'Invalid opponent';
         return c.json({ message, error: message }, 400);
     }
-    const topParam = Number(c.req.query('top') ?? 10);
-    const top = (VERSUS_TOPS as readonly number[]).includes(topParam) ? topParam : 10;
+    const rangeParam = c.req.query('range') ?? 't10';
+    const range: VersusRange = (VERSUS_RANGES as readonly string[]).includes(rangeParam)
+        ? (rangeParam as VersusRange)
+        : 't10';
+    const band = c.req.query('band') === '1';
 
     try {
-        // one season: make sure its leaderboard is loaded (ranks, top N)
+        // one season: make sure its leaderboard is loaded (ranks, ranges)
         if (seasons.length === 1) {
             const season = getSeasonById(seasons[0].seasonId);
             if (season) await ensureLeaderboard(season);
@@ -196,14 +223,23 @@ users.get('/:id/versus', async (c) => {
                     opponents: [{ userId: vs, rank: getSeasonRank(season.seasonId, vs) }],
                 };
             }
-            const players = getTopPlayers(season.seasonId, top);
-            if (!players) missing.push(season.seasonId);
-            return { seasonId: season.seasonId, name: season.name, opponents: players ?? [] };
+            const size = getLeaderboardSize(season.seasonId);
+            if (size === null) {
+                missing.push(season.seasonId);
+                return { seasonId: season.seasonId, name: season.name, opponents: [] };
+            }
+            const bounds = rangeBounds(range, band, size);
+            return {
+                seasonId: season.seasonId,
+                name: season.name,
+                bounds,
+                opponents: getRankRange(season.seasonId, bounds.from, bounds.to) ?? [],
+            };
         });
 
         const data = await versus(id, groups, {
             withMatches: !!vs,
-            cacheKey: `${seasonParam ?? 'live'}:${vs ?? `top${top}`}`,
+            cacheKey: `${seasonParam ?? 'live'}:${vs ?? `${range}${band ? ':band' : ''}`}`,
         });
         c.header('Cache-Control', 'public, max-age=60');
         return c.json({
@@ -213,8 +249,9 @@ users.get('/:id/versus', async (c) => {
             seasonName: seasonParam === 'all' ? 'All seasons' : seasons[0].name,
             mode: vs ? 'player' : 'top',
             vs: vs ?? null,
-            top: vs ? null : top,
-            /** seasons whose leaderboard the server doesn't have yet (top N mode) */
+            range: vs ? null : range,
+            band: !vs && band,
+            /** seasons whose leaderboard the server doesn't have yet (range mode) */
             missingSeasons: missing,
         });
     } catch (error) {
