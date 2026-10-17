@@ -83,7 +83,7 @@ export const playerNames: { [key: string]: string } = {
     '9fba438b8e96f0a04947de420d22e575cf071ceecf16893e': 'Rotten Potato',
     '9fb915dadd93f0a7114bdb1a0970e4249e521fba9810de6d': 'RR',
     '9fbf438edcc4fcf64a42da4b5a71e77e990148b498428a31': 'Ryan Mehalic',
-    '9cb8438dd69ffbac49458b4d5d70ee21cc504be8ca418e3b': 'Samplingrater',
+    '9cb8438dd69ffbac49458b4d5d70ee21cc504be8ca418e3b': 'SamplingRater',
     '9fbd4688dac5f1f31a44db185d21b07e9a0c1fef9941da38': 'Shinra',
     '9fbf17828a95afa41a118b4e0d7ae771c5074fef9e42893b': 'SmileyTheFoot',
     '9cba128cd6c7fca44d42884b5f27b776cc0c1be99917de30': 'Sniper',

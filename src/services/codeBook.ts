@@ -282,12 +282,17 @@ export const playerCodeOf = (userId: string) => playerByUser.get(userId);
 export const playerOf = (code: number) => playerByCode.get(code);
 
 export function findPlayerCodes(term: string): number[] {
-    const needle = term.trim().toLowerCase();
+    const raw = term.trim();
+    const needle = raw.toLowerCase();
     if (!needle) return [];
-    const codes: number[] = [];
+    const codes = new Set<number>();
+
+    const byId = playerByUser.get(raw) ?? playerByUser.get(needle);
+    if (byId !== undefined) codes.add(byId);
+
     const hit = (name: string | undefined) => !!name && name.toLowerCase().includes(needle);
     for (const [code, { u, n, o }] of playerByCode) {
-        if (hit(n) || hit(playerNames[u]) || o?.some(hit)) codes.push(code);
+        if (hit(n) || hit(playerNames[u]) || o?.some(hit)) codes.add(code);
     }
-    return codes;
+    return [...codes];
 }
