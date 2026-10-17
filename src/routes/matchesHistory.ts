@@ -60,7 +60,7 @@ function parseFilter(c: Context, seasonId: number): FacetFilter {
     const playerId = c.req.query('playerId');
     return {
         seasonId,
-        player: c.req.query('player')?.trim().slice(0, 40) || undefined,
+        player: c.req.query('player')?.trim().slice(0, 64) || undefined,
         playerId: playerId && /^[a-z0-9]{8,64}$/i.test(playerId) ? playerId : undefined,
         heroes: parseHeroes(c.req.query('heroes')),
         towers: list(c.req.query('towers'), MAX_TOWERS),
