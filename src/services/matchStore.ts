@@ -22,6 +22,7 @@ import type {
     MatchesFilter,
     MatchPlayer,
     MatchSort,
+    SideOptions,
     StoredMatchDoc,
 } from '@/types/match';
 import { extractUserId } from '@/utils/helpers';
@@ -277,8 +278,15 @@ export async function toApiMatch(doc: StoredMatchDoc) {
 // Query building (shared by the match list and the filter options)
 // ---------------------------------------------------------------------------
 
-export function canUseSameSide(filter: Pick<MatchesFilter, 'heroes' | 'towers'>) {
-    return filter.heroes.length <= 1 && filter.towers.length <= 3;
+export function canUseSameSide(
+    filter: Pick<MatchesFilter, 'heroes' | 'towers' | 'heroes2' | 'towers2'>,
+) {
+    return (
+        filter.heroes.length <= 1 &&
+        filter.towers.length <= 3 &&
+        filter.heroes2.length <= 1 &&
+        filter.towers2.length <= 3
+    );
 }
 
 function knownHeroBases() {
@@ -292,13 +300,53 @@ const heroCodesFor = (pick: HeroPick) => {
     return names.map((n) => codeOf('hero', n)).filter((c): c is number => c !== undefined);
 };
 
+/** Player codes for a name part and/or an exact id. null: no player filter, []: nobody. */
+function resolvePlayers(name?: string, id?: string): number[] | null {
+    let codes: number[] | null = null;
+    if (id) {
+        const code = playerCodeOf(id);
+        codes = code === undefined ? [] : [code];
+    }
+    if (name) {
+        const found = findPlayerCodes(name);
+        codes = codes ? codes.filter((c) => found.includes(c)) : found;
+    }
+    return codes;
+}
+
+/** One side's filters in same player mode. */
+interface SideSpec {
+    players: number[] | null;
+    heroes: number[] | null;
+    towers: number[];
+}
+
+/** The conditions a side's filters put on one player and loadout. */
+function sideConditions(spec: SideSpec, { player, loadout }: (typeof SIDES)[keyof typeof SIDES]) {
+    const all: object[] = [];
+    if (spec.players) all.push({ $in: [player, spec.players] });
+    if (spec.heroes) all.push({ $in: [heroExpr(loadout), spec.heroes] });
+    if (spec.towers.length) all.push({ $setIsSubset: [spec.towers, towersExpr(loadout)] });
+    return all;
+}
+
+const allOf = (conditions: object[]) =>
+    conditions.length === 0 ? null : conditions.length === 1 ? conditions[0] : { $and: conditions };
+
 /** Filter → MongoDB match. null when nothing can match (unknown hero, player…). */
 function buildQuery(filter: FacetFilter): BuiltQuery | null {
-    const heroSets = filter.heroes.map(heroCodesFor);
-    if (heroSets.some((set) => set.length === 0)) return null;
+    const sameSide = filter.sameSide && canUseSameSide(filter);
 
-    const towerCodes = filter.towers.map((t) => codeOf('tower', t));
-    if (towerCodes.some((c) => c === undefined)) return null;
+    const heroSets = filter.heroes.map(heroCodesFor);
+    const heroSets2 = sameSide ? filter.heroes2.map(heroCodesFor) : [];
+    if ([...heroSets, ...heroSets2].some((set) => set.length === 0)) return null;
+
+    const towerCodesOf = (towers: string[]) => towers.map((t) => codeOf('tower', t));
+    const rawTowers = towerCodesOf(filter.towers);
+    const rawTowers2 = sameSide ? towerCodesOf(filter.towers2) : [];
+    if ([...rawTowers, ...rawTowers2].some((c) => c === undefined)) return null;
+    const towerCodes = rawTowers as number[];
+    const towerCodes2 = rawTowers2 as number[];
 
     let mapCodes: number[] | null = null;
     if (filter.map) {
@@ -308,40 +356,50 @@ function buildQuery(filter: FacetFilter): BuiltQuery | null {
         if (mapCodes.length === 0) return null;
     }
 
-    let playerCodes: number[] | null = null;
-    if (filter.playerId) {
-        const code = playerCodeOf(filter.playerId);
-        if (code === undefined) return null;
-        playerCodes = [code];
-    }
-    if (filter.player) {
-        const found = findPlayerCodes(filter.player);
-        playerCodes = playerCodes ? playerCodes.filter((c) => found.includes(c)) : found;
-        if (playerCodes.length === 0) return null;
-    }
+    const playerCodes = resolvePlayers(filter.player, filter.playerId);
+    const playerCodes2 = sameSide ? resolvePlayers(filter.player2) : null;
+    if (playerCodes?.length === 0 || playerCodes2?.length === 0) return null;
 
     // indexed part: players
     const match: Record<string, unknown> = {};
-    if (playerCodes) match.$or = [{ a: { $in: playerCodes } }, { b: { $in: playerCodes } }];
+    if (playerCodes && playerCodes2) {
+        match.$or = [
+            { a: { $in: playerCodes }, b: { $in: playerCodes2 } },
+            { a: { $in: playerCodes2 }, b: { $in: playerCodes } },
+        ];
+    } else if (playerCodes ?? playerCodes2) {
+        const codes = (playerCodes ?? playerCodes2)!;
+        match.$or = [{ a: { $in: codes } }, { b: { $in: codes } }];
+    }
 
     // computed part: unpacked fields
     const exprs: object[] = [];
     if (mapCodes) exprs.push({ $in: [mapExpr, mapCodes] });
 
-    let sideOk: BuiltQuery['sideOk'] = null;
-    if (filter.sameSide && canUseSameSide(filter)) {
-        const sideCondition = ({ player, loadout }: (typeof SIDES)[keyof typeof SIDES]) => {
-            const all: object[] = [];
-            if (playerCodes) all.push({ $in: [player, playerCodes] });
-            if (heroSets[0]) all.push({ $in: [heroExpr(loadout), heroSets[0]] });
-            if (towerCodes.length) all.push({ $setIsSubset: [towerCodes, towersExpr(loadout)] });
-            return all.length ? { $and: all } : null;
+    let sides: BuiltQuery['sides'] = null;
+    if (sameSide) {
+        const one: SideSpec = {
+            players: playerCodes,
+            heroes: heroSets[0] ?? null,
+            towers: towerCodes,
         };
-        const left = sideCondition(SIDES.left);
-        const right = sideCondition(SIDES.right);
-        if (left && right) {
-            exprs.push({ $or: [left, right] });
-            sideOk = [left, right];
+        const two: SideSpec = {
+            players: playerCodes2,
+            heroes: heroSets2[0] ?? null,
+            towers: towerCodes2,
+        };
+        // side 1 can be the left or the right player, side 2 is then the other one
+        const straight = allOf([
+            ...sideConditions(one, SIDES.left),
+            ...sideConditions(two, SIDES.right),
+        ]);
+        const swapped = allOf([
+            ...sideConditions(one, SIDES.right),
+            ...sideConditions(two, SIDES.left),
+        ]);
+        if (straight && swapped) {
+            exprs.push({ $or: [straight, swapped] });
+            sides = { straight, swapped };
         }
     } else {
         if (heroSets.length === 1) {
@@ -366,7 +424,7 @@ function buildQuery(filter: FacetFilter): BuiltQuery | null {
         }
     }
     if (exprs.length) match.$expr = exprs.length === 1 ? exprs[0] : { $and: exprs };
-    return { match, sideOk };
+    return { match, sides };
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +432,8 @@ function buildQuery(filter: FacetFilter): BuiltQuery | null {
 // ---------------------------------------------------------------------------
 
 type Count = { _id: number; n: number };
+/** same player mode: side 1 or side 2; undefined: both players */
+type Slot = 0 | 1 | undefined;
 
 const OPTIONS_TTL_MS = 60_000;
 const optionsCache = new Map<string, { data: FilterOptions; expires: number }>();
@@ -394,63 +454,52 @@ async function countBy(
     return collection(seasonId).aggregate<Count>(pipeline, { allowDiskUse: true }).toArray();
 }
 
-/** Heroes (each counted once per match) on the sides that matter. */
-function heroesProjection(built: BuiltQuery) {
-    if (!built.sideOk) return { $setUnion: [[heroExpr('$x'), heroExpr('$y')]] };
-    const [left, right] = built.sideOk;
+/** Values (each counted once per match) of both players, or only of one side's player. */
+function sideProjection(built: BuiltQuery, slot: Slot, values: (loadout: string) => object[]) {
+    if (!built.sides || slot === undefined) {
+        return { $setUnion: [[...values('$x'), ...values('$y')]] };
+    }
+    const { straight, swapped } = built.sides;
+    // straight: side 1 is the left player; swapped: side 1 is the right player
+    const [whenStraight, whenSwapped] = slot === 0 ? ['$x', '$y'] : ['$y', '$x'];
     return {
         $setUnion: [
-            { $cond: [left, [heroExpr('$x')], []] },
-            { $cond: [right, [heroExpr('$y')], []] },
+            { $cond: [straight, values(whenStraight), []] },
+            { $cond: [swapped, values(whenSwapped), []] },
         ],
     };
 }
 
-/** Towers used (each counted once per match) on the sides that matter. */
-function towersProjection(built: BuiltQuery) {
-    if (!built.sideOk) return { $setUnion: [[...towersExpr('$x'), ...towersExpr('$y')]] };
-    const [left, right] = built.sideOk;
-    return {
-        $setUnion: [
-            { $cond: [left, towersExpr('$x'), []] },
-            { $cond: [right, towersExpr('$y'), []] },
-        ],
-    };
+const heroesProjection = (built: BuiltQuery, slot: Slot) =>
+    sideProjection(built, slot, (loadout) => [heroExpr(loadout)]);
+const towersProjection = (built: BuiltQuery, slot: Slot) => sideProjection(built, slot, towersExpr);
+
+/** A selected hero, and the query counting its variants as if "any variant" was picked. */
+interface SelectedHero {
+    pick: HeroPick;
+    relaxed: BuiltQuery | null;
 }
 
-export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptions> {
-    const cacheKey = JSON.stringify(filter);
-    const hit = optionsCache.get(cacheKey);
-    if (hit && hit.expires > Date.now()) return hit.data;
-    await loadCodeBook();
-    const { seasonId } = filter;
+/** Heroes and towers of one side (or both), counted within the other filters. */
+async function sideOptions(
+    seasonId: number,
+    full: BuiltQuery | null,
+    selected: SelectedHero[],
+    slot: Slot,
+): Promise<SideOptions> {
     const known = knownHeroBases();
-
-    const full = buildQuery(filter);
-    const withoutMap = buildQuery({ ...filter, map: undefined });
-    // a selected hero with a chosen variant: count its variants as if "any variant"
-    const relaxed = filter.heroes.map((pick, i) =>
-        pick.hero
-            ? buildQuery({
-                  ...filter,
-                  heroes: filter.heroes.map((p, j) => (j === i ? { base: p.base } : p)),
-              })
-            : full,
-    );
-
-    const [mapCounts, heroCounts, towerCounts, ...relaxedHeroCounts] = await Promise.all([
-        countBy(seasonId, withoutMap, [mapExpr]),
-        full ? countBy(seasonId, full, heroesProjection(full)) : Promise.resolve([]),
-        full ? countBy(seasonId, full, towersProjection(full)) : Promise.resolve([]),
-        ...relaxed.map((built, i) =>
-            filter.heroes[i].hero && built
-                ? countBy(seasonId, built, heroesProjection(built))
+    const [heroCounts, towerCounts, ...relaxedHeroCounts] = await Promise.all([
+        full ? countBy(seasonId, full, heroesProjection(full, slot)) : Promise.resolve([]),
+        full ? countBy(seasonId, full, towersProjection(full, slot)) : Promise.resolve([]),
+        ...selected.map(({ pick, relaxed }) =>
+            pick.hero && relaxed
+                ? countBy(seasonId, relaxed, heroesProjection(relaxed, slot))
                 : Promise.resolve(null),
         ),
     ]);
 
     // heroes: selected bases use their relaxed counts, the others the full ones
-    const byBase = new Map<string, FilterOptions['heroes'][number]>();
+    const byBase = new Map<string, SideOptions['heroes'][number]>();
     const addHeroes = (counts: Count[], keep: (base: string) => boolean) => {
         for (const { _id, n } of counts) {
             const hero = nameOf('hero', _id);
@@ -462,26 +511,11 @@ export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptio
             byBase.set(base, entry);
         }
     };
-    const selected = filter.heroes.map((p) => p.base);
-    addHeroes(
-        heroCounts,
-        (base) => !selected.includes(base) || !filter.heroes.find((p) => p.base === base)?.hero,
-    );
-    filter.heroes.forEach((pick, i) => {
+    addHeroes(heroCounts, (base) => !selected.some(({ pick }) => pick.base === base && pick.hero));
+    selected.forEach(({ pick }, i) => {
         const counts = relaxedHeroCounts[i];
         if (pick.hero && counts) addHeroes(counts, (base) => base === pick.base);
     });
-
-    const byMap = new Map<string, { key: string; map: string; count: number; best: number }>();
-    for (const { _id, n } of mapCounts) {
-        const map = nameOf('map', _id);
-        const key = mapKey(map);
-        const entry = byMap.get(key) ?? { key, map, count: 0, best: -1 };
-        entry.count += n;
-        // show the id with the most matches (usually the current version of the map)
-        if (n > entry.best) Object.assign(entry, { map, best: n });
-        byMap.set(key, entry);
-    }
 
     const heroes = await Promise.all(
         [...byBase.values()].map(async (h) => ({
@@ -494,11 +528,65 @@ export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptio
         })),
     );
 
-    const data: FilterOptions = {
+    return {
         heroes: heroes.sort((a, b) => a.base.localeCompare(b.base)),
         towers: towerCounts
             .map(({ _id, n }) => ({ tower: nameOf('tower', _id), count: n }))
             .sort((a, b) => a.tower.localeCompare(b.tower)),
+    };
+}
+
+export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptions> {
+    const cacheKey = JSON.stringify(filter);
+    const hit = optionsCache.get(cacheKey);
+    if (hit && hit.expires > Date.now()) return hit.data;
+    await loadCodeBook();
+    const { seasonId } = filter;
+    const sameSide = filter.sameSide && canUseSameSide(filter);
+
+    const full = buildQuery(filter);
+    const withoutMap = buildQuery({ ...filter, map: undefined });
+    // a selected hero with a chosen variant: count its variants as if "any variant"
+    const selectedOf = (key: 'heroes' | 'heroes2'): SelectedHero[] =>
+        filter[key].map((pick, i) => {
+            if (!pick.hero) return { pick, relaxed: full };
+            const picks = filter[key].map((p, j) => (j === i ? { base: p.base } : p));
+            return {
+                pick,
+                relaxed: buildQuery(
+                    key === 'heroes' ? { ...filter, heroes: picks } : { ...filter, heroes2: picks },
+                ),
+            };
+        });
+
+    const [mapCounts, sides] = await Promise.all([
+        countBy(seasonId, withoutMap, [mapExpr]),
+        Promise.all(
+            sameSide
+                ? [
+                      sideOptions(seasonId, full, selectedOf('heroes'), 0),
+                      sideOptions(seasonId, full, selectedOf('heroes2'), 1),
+                  ]
+                : [sideOptions(seasonId, full, selectedOf('heroes'), undefined)],
+        ),
+    ]);
+
+    const byMap = new Map<string, { key: string; map: string; count: number; best: number }>();
+    for (const { _id, n } of mapCounts) {
+        const map = nameOf('map', _id);
+        const key = mapKey(map);
+        const entry = byMap.get(key) ?? { key, map, count: 0, best: -1 };
+        entry.count += n;
+        // show the id with the most matches (usually the current version of the map)
+        if (n > entry.best) Object.assign(entry, { map, best: n });
+        byMap.set(key, entry);
+    }
+
+    const data: FilterOptions = {
+        ...sides[0],
+        ...(sameSide && sides[1]
+            ? { sides: [sides[0], sides[1]] as [SideOptions, SideOptions] }
+            : {}),
         maps: [...byMap.values()]
             .map(({ key, map, count }) => ({ key, map, count }))
             .sort((a, b) => a.key.localeCompare(b.key)),

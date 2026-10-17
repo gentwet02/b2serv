@@ -71,8 +71,15 @@ export interface MatchesFilter {
     heroes: HeroPick[]; // up to 2
     towers: string[]; // up to 6
     map?: string; // map key
-    /** player, hero and towers on the same side (only with ≤ 1 hero and ≤ 3 towers) */
+    /**
+     * "Same player" mode: player, hero and towers above describe one side of the match,
+     * player2, heroes2 and towers2 the other side (≤ 1 hero and ≤ 3 towers per side).
+     * Either side can be left empty.
+     */
     sameSide: boolean;
+    player2?: string; // same player mode only: part of the other side's name
+    heroes2: HeroPick[]; // same player mode only: ≤ 1
+    towers2: string[]; // same player mode only: ≤ 3
 }
 
 export type FacetFilter = Omit<MatchesFilter, 'offset' | 'limit' | 'sort'>;
@@ -81,16 +88,25 @@ export type MatchSort = (typeof MATCH_SORTS)[number];
 
 export interface BuiltQuery {
     match: Record<string, unknown>;
-    /** with "same player": which side satisfies the side conditions (aggregation expressions) */
-    sideOk: [object, object] | null;
+    /**
+     * With "same player" (aggregation expressions): `straight` when side 1's filters fit the
+     * left player and side 2's the right one, `swapped` for the other way round.
+     */
+    sides: { straight: object; swapped: object } | null;
 }
 
-export interface FilterOptions {
+/** Heroes and towers available for one side (or both sides when not split). */
+export interface SideOptions {
     heroes: {
         base: string;
         count: number;
         variants: { hero: string; count: number; portrait?: string }[];
     }[];
     towers: { tower: string; count: number }[];
+}
+
+export interface FilterOptions extends SideOptions {
+    /** same player mode: the options of side 1 and side 2 */
+    sides?: [SideOptions, SideOptions];
     maps: { key: string; map: string; count: number }[];
 }
