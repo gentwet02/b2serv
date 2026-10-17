@@ -247,7 +247,7 @@ async function side(playerCode: number, loadout: number, result: string) {
     const userId = player?.u ?? '';
     return {
         displayName: player?.n ?? 'Unknown player',
-        realName: playerNames[userId],
+        alias: playerNames[userId],
         hero,
         heroPortrait: await getAssetUrl('hero', hero),
         towerone: towers[0],
@@ -1101,7 +1101,7 @@ async function computeHeadToHead(
         minGames: H2H_MIN_GAMES,
         labels: await label.labels(),
         name: me !== undefined ? (playerOf(me)?.n ?? null) : null,
-        realName: playerNames[userId] ?? null,
+        alias: playerNames[userId] ?? null,
         total: summarize(total, H2H_MIN_GAMES.total),
         opponents: opponents.map((o) => {
             const code = playerCodeOf(o.userId);
@@ -1109,7 +1109,7 @@ async function computeHeadToHead(
             return {
                 userId: o.userId,
                 name: nameOfUser(o.userId, o.name),
-                realName: playerNames[o.userId] ?? null,
+                alias: playerNames[o.userId] ?? null,
                 rank: o.rank,
                 ...summarize(tally, H2H_MIN_GAMES.opponent),
             };
@@ -1231,7 +1231,7 @@ async function computeVersus(userId: string, seasons: VersusSeason[], withMatche
 
     return {
         name: me !== undefined ? (playerOf(me)?.n ?? null) : null,
-        realName: playerNames[userId] ?? null,
+        alias: playerNames[userId] ?? null,
         minGames: H2H_MIN_GAMES,
         labels: await label.labels(),
         total: {
@@ -1245,7 +1245,7 @@ async function computeVersus(userId: string, seasons: VersusSeason[], withMatche
             .map((o) => ({
                 userId: o.userId,
                 name: o.name,
-                realName: playerNames[o.userId] ?? null,
+                alias: playerNames[o.userId] ?? null,
                 rank: o.bestRank,
                 seasons: o.seasons,
                 record: o.record,
@@ -1284,7 +1284,7 @@ export function opponentsMet(userId: string, seasonIds: number[]) {
                 return {
                     userId: player?.u ?? '',
                     name: player?.n ?? null,
-                    realName: playerNames[player?.u ?? ''] ?? null,
+                    alias: playerNames[player?.u ?? ''] ?? null,
                     record,
                 };
             })
