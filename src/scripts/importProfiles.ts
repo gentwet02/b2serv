@@ -9,9 +9,9 @@
  * it from the season_<N> folder name). Readings are applied oldest first; a season keeps its first and last
  * snapshot, the current profile only moves forward in time, and names from old data never
  * replace a player's current one. Safe to re-run: the same snapshot gives the same result.
- * "same season" column: share of bodies whose own `currentSeason` is the season they're filed
- * under, a check of the NK key → season id mapping (players who hadn't played the season yet
- * still show the previous one).
+ * "same season" column: among bodies with a `currentSeason`, the share naming the season they're
+ * filed under, a check of the folder / NK key → season id mapping (players who hadn't played
+ * the season yet still show the previous one). NK sends "none" there since season 22: "can't check".
  */
 import mongoose from 'mongoose';
 import connectDB from '@/services/database';
@@ -133,10 +133,21 @@ if (!dryRun) {
     if (readings.length) process.stdout.write('\n');
 }
 
+/**
+ * Share of the bodies naming a season that name this one. null when none does: NK sends
+ * "none" in every profile since season 22, so the mapping can't be checked there.
+ */
+function sameSeason(seasonId: number, row: SeasonRow): number | null {
+    let named = 0;
+    for (const [nk, n] of row.nkSeasons) if (nk.startsWith('season_')) named += n;
+    if (named === 0) return null;
+    return (row.nkSeasons.get(`season_${seasonId}`) ?? 0) / named;
+}
+
 const rows: Record<string, object> = {};
 for (const [seasonId, row] of [...perSeason].sort(([a], [b]) => a - b)) {
     const nk = [...row.nkSeasons].sort((a, b) => b[1] - a[1]);
-    const matching = row.nkSeasons.get(`season_${seasonId}`) ?? 0;
+    const same = sameSeason(seasonId, row);
     rows[`season id ${seasonId}`] = {
         snapshots: row.snapshots,
         players: row.players.size,
@@ -147,7 +158,7 @@ for (const [seasonId, row] of [...perSeason].sort(([a], [b]) => a - b)) {
             .slice(0, 3)
             .map(([k, n]) => `${k}×${n}`)
             .join(' '),
-        'same season': `${Math.round((matching / row.snapshots) * 100)}%`,
+        'same season': same === null ? "can't check" : `${Math.round(same * 100)}%`,
         action: dryRun ? 'would store' : 'stored',
     };
 }
@@ -163,8 +174,8 @@ if (skipped.unknownSeason > 0) {
     );
 }
 for (const [seasonId, row] of perSeason) {
-    const matching = row.nkSeasons.get(`season_${seasonId}`) ?? 0;
-    if (matching < row.snapshots / 2) {
+    const same = sameSeason(seasonId, row);
+    if (same !== null && same < 0.5) {
         console.warn(
             `⚠ season id ${seasonId}: most bodies say another NK season (${[...row.nkSeasons.keys()].join(', ')}). ` +
                 `Check the season mapping before importing.`,
