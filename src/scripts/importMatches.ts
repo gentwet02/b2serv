@@ -4,7 +4,7 @@
  */
 import mongoose from 'mongoose';
 import connectDB from '@/services/database';
-import { CODE_BITS, codeOf, namesOf, playerCodeOf, type CodeKind } from '@/services/codeBook';
+import { CODE_BITS, codeOf, namesOf, playerCodeOf, type MatchCodeKind } from '@/services/codeBook';
 import { rememberMatchAssets } from '@/services/matchMeta';
 import { countMatches, findStoredDates, saveCrawledMatches } from '@/services/matchStore';
 import { fetchSeasons } from '@/services/ninjakiwi';
@@ -102,7 +102,7 @@ const batches = new Map<number, Map<string, { match: Match; t?: number }>>();
 const seenIds = new Map<number, Set<string>>();
 let outOfRange = 0;
 
-const newCodes: Record<CodeKind, Set<string>> = {
+const newCodes: Record<MatchCodeKind, Set<string>> = {
     hero: new Set(),
     tower: new Set(),
     map: new Set(),
@@ -111,7 +111,7 @@ const newCodes: Record<CodeKind, Set<string>> = {
 const newPlayers = new Set<string>();
 
 function previewCodes(match: Match) {
-    const add = (kind: CodeKind, name: string) => {
+    const add = (kind: MatchCodeKind, name: string) => {
         if (name && codeOf(kind, name) === undefined) newCodes[kind].add(name);
     };
     add('map', match.map);
@@ -292,7 +292,7 @@ if (otherSeasons.size > 0)
 console.log('\nCode book');
 console.table(
     Object.fromEntries(
-        (Object.keys(newCodes) as CodeKind[]).map((kind) => {
+        (Object.keys(newCodes) as MatchCodeKind[]).map((kind) => {
             const total = namesOf(kind).length + newCodes[kind].size;
             return [
                 kind,
@@ -307,7 +307,7 @@ console.table(
     ),
 );
 console.log(`New players: ${newPlayers.size}`);
-for (const kind of Object.keys(newCodes) as CodeKind[]) {
+for (const kind of Object.keys(newCodes) as MatchCodeKind[]) {
     if (namesOf(kind).length + newCodes[kind].size > 2 ** CODE_BITS[kind]) {
         console.warn(
             `⚠ ${kind} codes would exceed ${CODE_BITS[kind]} bits: those matches would be invalid`,

@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { getLiveSeason, getSeasons, getSeasonsLastFetch } from '@/services/seasons';
 import { getAssetReport } from '@/utils/assets';
+import { countStoredProfiles } from '@/services/profileStore';
+import { nextSweepInMs, sweepState } from '@/services/profileSweep';
 
 export const info = new Hono();
 
@@ -23,3 +25,15 @@ info.get('/', (c) => {
 });
 
 info.get('/assets', (c) => c.json(getAssetReport()));
+
+/** GET /info/profiles: the profile sweep and how many profiles are stored. */
+info.get('/profiles', async (c) =>
+    c.json({
+        ...sweepState,
+        lastRunStartedAt: sweepState.lastRunStartedAt?.toISOString() ?? null,
+        lastRunEndedAt: sweepState.lastRunEndedAt?.toISOString() ?? null,
+        nextRunIn: nextSweepInMs() ?? 'running',
+        stored: await countStoredProfiles().catch(() => null),
+        lastRunStored: sweepState.stored,
+    }),
+);

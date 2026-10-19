@@ -13,7 +13,9 @@ export const env: Environment = {
         'mongodb://localhost:27017/battles2',
     NK_FETCH_INTERVAL: num(process.env.NK_FETCH_INTERVAL, 300_000),
     NK_MATCHES_INTERVAL: num(process.env.NK_MATCHES_INTERVAL, 900_000),
+    NK_PROFILES_INTERVAL: num(process.env.NK_PROFILES_INTERVAL, 1_800_000),
     NK_FETCH_RETRIES: num(process.env.NK_FETCH_RETRIES, 5),
     NK_REQUESTS_PER_SECOND: num(process.env.NK_REQUESTS_PER_SECOND, 2),
     CLIENT_URL: process.env.CLIENT_URL || 'http://localhost:5173',
+    ADMIN_TOKEN: process.env.ADMIN_TOKEN || '',
 };

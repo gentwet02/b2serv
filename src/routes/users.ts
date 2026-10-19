@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
+import { getConnInfo } from 'hono/bun';
 import {
-    ensureLeaderboard,
+    readLeaderboard,
     getRankHistory,
     getLeaderboardSize,
     getRankRange,
@@ -14,19 +15,21 @@ import {
     opponentsMet,
     versus,
 } from '@/services/matchStore';
-import { getPlayerData } from '@/services/playerData';
+import { getLiveMatches } from '@/services/liveMatches';
+import { getProfileSeason, getStoredProfile } from '@/services/profileStore';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
 import { logger } from '@/utils/logger';
-import { fixProfileAssets } from '@/utils/assets';
+import { fixAssetUrl, fixProfileAssets } from '@/utils/assets';
 import { extractUserId } from '@/utils/helpers';
 import { VersusSeason } from '@/types/season';
 
 /**
- * Player data for the client. The browser never calls Ninja Kiwi itself.
+ * Player data for the client, from the database (background jobs keep it up to date).
+ * The one exception, /:id/matches, is rate limited (services/liveMatches.ts).
  *
- * GET /users/:id           NK profile (memory → MongoDB → NK, see services/playerData.ts)
- * GET /users/:id/matches   NK recent matches (fallback when we stored none)
- * GET /users/:id/season    season record from the stored matches
+ * GET /users/:id           stored profile (NK body + our season records), never asks NK
+ * GET /users/:id/matches   NK's latest matches (fallback when we stored none), rate limited
+ * GET /users/:id/season    season record: stored profile (W/D/L, streaks) + stored matches (heroes)
  * GET /users/:id/ranks     rank in every stored season, best end-of-season finish
  * GET /users/:id/compare   the player against the season's top 10, or ?with=id1,id2…
  * GET /users/:id/versus    head to head against one player or a leaderboard range
@@ -41,24 +44,78 @@ const invalid = (c: Context) => {
     return c.json({ message, error: message }, 400);
 };
 
-function proxy(kind: 'profile' | 'matches') {
-    return async (c: Context) => {
-        const id = c.req.param('id') ?? '';
-        if (!USER_ID.test(id)) return invalid(c);
+/** The visitor's address: the proxy's header when there is one, else the connection. */
+function clientIp(c: Context) {
+    const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
+    if (forwarded) return forwarded;
+    try {
+        return getConnInfo(c).remote.address ?? 'unknown';
+    } catch {
+        return 'unknown';
+    }
+}
 
-        const entry = await getPlayerData(kind, id);
-        if (!entry) {
+async function recentMatches(c: Context) {
+    const id = c.req.param('id') ?? '';
+    if (!USER_ID.test(id)) return invalid(c);
+
+    const result = await getLiveMatches(id, clientIp(c));
+    switch (result.status) {
+        case 'unknown': {
+            const message = "We don't track this player.";
+            return c.json({ message, error: 'not_found' }, 404);
+        }
+        case 'busy': {
+            const seconds = Math.ceil(result.retryAfterMs / 1000);
+            c.header('Retry-After', String(seconds));
+            const message = `Too many requests right now. Try again in ${seconds}s.`;
+            return c.json({ message, error: 'rate_limited' }, 429);
+        }
+        case 'unavailable': {
             const message = "Ninja Kiwi's API didn't answer. Try again in a moment.";
             return c.json({ message, error: 'upstream_unavailable' }, 502);
         }
-        if (!entry.data.success) {
-            const message = entry.data.error || 'Player not found';
-            return c.json({ message, error: message }, 404);
-        }
+    }
+    const { data, fetchedAt } = result.entry;
+    if (!data.success) {
+        const message = data.error || 'Player not found';
+        return c.json({ message, error: message }, 404);
+    }
+    c.header('Cache-Control', 'public, max-age=60');
+    return c.json({ ...data, fetchedAt: new Date(fetchedAt).toISOString() });
+}
 
-        const data = kind === 'profile' ? fixProfileAssets(entry.data) : entry.data;
-        return c.json({ ...data, fetchedAt: new Date(entry.fetchedAt).toISOString() });
-    };
+/** Asset links inside a season record, with dead animated links replaced. */
+function fixSeasonAssets<T extends { equipped: Record<string, unknown> }>(season: T): T {
+    const equipped = { ...season.equipped };
+    for (const key of ['avatar', 'banner', 'border'] as const) {
+        if (typeof equipped[key] === 'string') equipped[key] = fixAssetUrl(equipped[key]);
+    }
+    return { ...season, equipped };
+}
+
+async function storedProfile(c: Context) {
+    const id = c.req.param('id') ?? '';
+    if (!USER_ID.test(id)) return invalid(c);
+    try {
+        const stored = await getStoredProfile(id);
+        if (!stored) {
+            const message = 'We have no profile stored for this player yet.';
+            return c.json({ message, error: 'not_found', success: false }, 404);
+        }
+        const { seasons, ...body } = stored.body;
+        const data = fixProfileAssets({ success: true, error: null, body });
+        c.header('Cache-Control', 'public, max-age=60');
+        return c.json({
+            ...data,
+            seasons: seasons.map(fixSeasonAssets),
+            fetchedAt: stored.fetchedAt.toISOString(),
+        });
+    } catch (error) {
+        logger.error(`Stored profile of ${id} failed: ${error}`);
+        const message = 'Could not load this profile.';
+        return c.json({ message, error: message }, 500);
+    }
 }
 
 users.get('/:id/season', async (c) => {
@@ -71,7 +128,19 @@ users.get('/:id/season', async (c) => {
         return c.json({ message, error: message }, 404);
     }
     try {
-        return c.json({ ...(await getSeasonStats(id, season.seasonId)), seasonName: season.name });
+        const [stats, record] = await Promise.all([
+            getSeasonStats(id, season.seasonId),
+            getProfileSeason(id, season.seasonId),
+        ]);
+        // streaks come from the profile readings: the stored matches miss games (only HoM
+        // vs HoM, NK's 24-match window), which split or join streaks
+        return c.json({
+            ...stats,
+            winStreak: record?.winStreak ?? null,
+            bestWinStreak: record?.bestWinStreak ?? null,
+            record: record ? fixSeasonAssets(record) : null,
+            seasonName: season.name,
+        });
     } catch (error) {
         logger.error(`Season stats of ${id} failed: ${error}`);
         const message = 'Could not compute the season record.';
@@ -110,7 +179,7 @@ users.get('/:id/compare', async (c) => {
     try {
         // ranks and default opponents: the season's leaderboard, the live one for "all"
         const boardSeason = season ?? live;
-        const entry = boardSeason ? await ensureLeaderboard(boardSeason) : null;
+        const entry = boardSeason ? await readLeaderboard(boardSeason) : null;
         const board = new Map(
             (entry?.players ?? []).map((p, i) => [
                 extractUserId(p.profile),
@@ -211,7 +280,7 @@ users.get('/:id/versus', async (c) => {
         // one season: make sure its leaderboard is loaded (ranks, ranges)
         if (seasons.length === 1) {
             const season = getSeasonById(seasons[0].seasonId);
-            if (season) await ensureLeaderboard(season);
+            if (season) await readLeaderboard(season);
         }
 
         const missing: number[] = [];
@@ -290,5 +359,5 @@ users.get('/:id/ranks', (c) => {
     return c.json(getRankHistory(id));
 });
 
-users.get('/:id/matches', proxy('matches'));
-users.get('/:id', proxy('profile'));
+users.get('/:id/matches', recentMatches);
+users.get('/:id', storedProfile);

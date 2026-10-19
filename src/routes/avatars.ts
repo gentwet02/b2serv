@@ -6,9 +6,8 @@ import { logger } from '@/utils/logger';
  * GET /avatars?ids=a,b,c   (at most MAX_IDS ids)
  * { avatars: { id: url }, pending: [id] }
  *
- * `avatars` are the ones we already have (memory or MongoDB).
- * `pending` are players whose profile is being fetched from Ninja Kiwi right now
- * (low priority, through the rate limiter): ask again in a few seconds.
+ * `avatars` come from the stored profiles. `pending` is always empty: no request to Ninja Kiwi
+ * is made for a visitor, missing avatars arrive with the next profile sweep.
  */
 export const avatars = new Hono();
 
@@ -32,8 +31,7 @@ avatars.get('/', async (c) => {
 
     try {
         const result = await requestAvatars(ids);
-        // the answer changes as background fetches finish: never let a cache keep it
-        c.header('Cache-Control', 'no-store');
+        c.header('Cache-Control', 'public, max-age=300');
         return c.json(result);
     } catch (error) {
         logger.error(`Avatars of ${ids.length} player(s) failed: ${error}`);

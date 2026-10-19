@@ -118,6 +118,27 @@ export async function refreshSeasons() {
     );
 }
 
+/** NK gives season times in seconds or milliseconds */
+export const toMs = (v: number) => (v < 1e12 ? v * 1000 : v);
+
+/**
+ * The season a moment belongs to: the latest one started by then. Between the end of a season
+ * and the start of the next, that's still the one that ended (no ranked game can count for the
+ * next one yet), so a reading taken then closes it.
+ */
+export function seasonAt(seasons: { seasonId: number; start: number }[], dateMs: number) {
+    let found: number | null = null;
+    let foundStart = -Infinity;
+    for (const s of seasons) {
+        const start = toMs(s.start);
+        if (start > 0 && start <= dateMs && start > foundStart) {
+            found = s.seasonId;
+            foundStart = start;
+        }
+    }
+    return found;
+}
+
 export const getSeasons = () => state.seasons;
 export const getLiveSeason = () => state.live;
 export const getSeasonById = (id: number) => state.seasons.find((s) => s.seasonId === id) ?? null;

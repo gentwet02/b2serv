@@ -7,7 +7,6 @@ import {
     loadStoredLeaderboard,
     storeLeaderboard,
 } from '@/services/leaderboardStore';
-import { warmProfiles } from '@/services/playerData';
 import type { LeaderboardPlayer, LeaderboardPlayerEncoded } from '@/types/leaderboard';
 import { encodePlayer } from '@/utils/encode';
 import { extractUserId, type Priority } from '@/utils/helpers';
@@ -106,8 +105,6 @@ export function updateLeaderboard(season: SeasonInfo, priority: Priority = 'low'
         const updatedAt = new Date();
         const final = !season.live;
         remember(id, players, updatedAt, final);
-        // the top of the live leaderboard gets viewed most: keep those profiles (and avatars) fresh
-        if (season.live) warmProfiles(players.slice(0, 10).map((p) => extractUserId(p.profile)));
         await storeLeaderboard({ seasonId: id, players, updatedAt, final });
         logger.debug(`Season ${id}: ${players.length} players cached${final ? ' (final)' : ''}`);
     })()
@@ -120,7 +117,21 @@ export function updateLeaderboard(season: SeasonInfo, priority: Priority = 'low'
 
 export const getCachedLeaderboard = (seasonId: number) => cache.get(seasonId) ?? null;
 
-/** What a visitor's request goes through: memory, then Mongo, then Ninja Kiwi at high priority */
+/**
+ * What a visitor's request goes through: memory, then MongoDB. Never Ninja Kiwi: a season we
+ * don't have yet comes with the background jobs (live refresh, warmPastSeasons).
+ * A season stored while live and ended since is served as stored until its final copy arrives.
+ */
+export async function readLeaderboard(season: SeasonInfo): Promise<LeaderboardEntry | null> {
+    const inMemory = cache.get(season.seasonId);
+    if (inMemory) return inMemory;
+    const stored = await loadStoredLeaderboard(season.seasonId);
+    if (!stored || stored.players.length === 0) return null;
+    remember(season.seasonId, stored.players, new Date(stored.updatedAt), stored.final);
+    return cache.get(season.seasonId)!;
+}
+
+/** Background jobs only: memory, then MongoDB, then Ninja Kiwi (low priority). */
 export async function ensureLeaderboard(season: SeasonInfo): Promise<LeaderboardEntry | null> {
     const id = season.seasonId;
     const inMemory = cache.get(id);
@@ -136,7 +147,7 @@ export async function ensureLeaderboard(season: SeasonInfo): Promise<Leaderboard
     }
 
     // missing, or stored while the season was still live and it has ended since
-    await updateLeaderboard(season, 'high');
+    await updateLeaderboard(season, 'low');
     return cache.get(id) ?? null;
 }
 
@@ -148,8 +159,23 @@ export async function getLeaderboardPlayers(season: SeasonInfo, maxAgeMs = env.N
     return cache.get(season.seasonId)?.players ?? [];
 }
 
-/** Background, low priority: fetch every finished season not stored yet */
+/**
+ * Background, low priority: fetch every finished season not stored as final yet (new, or
+ * stored while it was live). Runs with every live refresh, so an ended season gets its final
+ * copy soon after NK closes it.
+ */
+let warming = false;
 async function warmPastSeasons() {
+    if (warming) return;
+    warming = true;
+    try {
+        await warmMissingSeasons();
+    } finally {
+        warming = false;
+    }
+}
+
+async function warmMissingSeasons() {
     const stored = await listFinalSeasonIds();
     const missing = getSeasons().filter((s) => !s.live && !s.archived && !stored.has(s.seasonId));
     if (missing.length === 0) return;
@@ -189,6 +215,7 @@ export async function startLeaderboardScheduler() {
         async () => {
             const season = getLiveSeason();
             if (season) await updateLeaderboard(season);
+            await warmPastSeasons();
         },
         env.NK_FETCH_INTERVAL,
     );

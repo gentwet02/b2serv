@@ -1,5 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { MATCH_SORTS, MAX_HEROES, MAX_TOWERS } from '@/config/constants';
+import { env } from '@/config/environment';
 import { crawlState, nextCrawlInMs, refreshMatchesHistory } from '@/services/matchesHistory';
 import {
     canUseSameSide,
@@ -175,7 +176,11 @@ matchesHistory.get('/status', async (c) =>
     }),
 );
 
-matchesHistory.get('/force-update', (c) => {
+/** Starts a crawl now. Admin only: it sends a request to NK for every HoM player. */
+matchesHistory.post('/force-update', (c) => {
+    if (!env.ADMIN_TOKEN || c.req.header('x-admin-token') !== env.ADMIN_TOKEN) {
+        return c.json({ message: 'Not found', error: 'Not found' }, 404);
+    }
     if (crawlState.isFetching) return c.json({ message: 'Update already in progress' });
     void refreshMatchesHistory();
     return c.json({ message: 'Crawl started. Check /matches-history/status for progress.' }, 202);

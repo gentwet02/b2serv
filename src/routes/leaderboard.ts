@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { ensureLeaderboard } from '@/services/leaderboard';
+import { readLeaderboard } from '@/services/leaderboard';
 import { getSeasonRecords } from '@/services/matchStore';
 import { getKnownAvatars } from '@/services/playerData';
 import { extractUserId } from '@/utils/helpers';
@@ -19,7 +19,7 @@ leaderboard.get('/:id/stats', async (c) => {
         return c.json({ message, error: message }, 404);
     }
     try {
-        const entry = await ensureLeaderboard(season);
+        const entry = await readLeaderboard(season);
         const top = (entry?.players ?? []).slice(0, 100).map((p) => extractUserId(p.profile));
         const [records, avatars] = await Promise.all([
             getSeasonRecords(season.seasonId),
@@ -52,9 +52,9 @@ leaderboard.get('/:id?', async (c) => {
         }
     }
 
-    const entry = await ensureLeaderboard(season);
+    const entry = await readLeaderboard(season);
     if (!entry) {
-        const message = "Ninja Kiwi's API didn't send this leaderboard. Try again in a minute.";
+        const message = "This leaderboard isn't stored yet. Try again in a few minutes.";
         return c.json({ message, error: message }, 503);
     }
 

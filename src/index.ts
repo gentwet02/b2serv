@@ -4,7 +4,8 @@ import router from '@/router';
 import connectDB from '@/services/database';
 import { startLeaderboardScheduler } from '@/services/leaderboard';
 import { startMatchesScheduler } from '@/routes/matchesHistory';
-import { listStoredAssetUrls } from '@/services/profileCache';
+import { listProfileAssetUrls } from '@/services/profileStore';
+import { startProfileSweep } from '@/services/profileSweep';
 import { startSeasonsScheduler } from '@/services/seasons';
 import { logger } from '@/utils/logger';
 import { learnAssetUrl } from '@/utils/assets';
@@ -18,12 +19,15 @@ for (const [path, handler] of Object.entries(router)) {
 }
 
 await connectDB();
-void listStoredAssetUrls().then((urls) => urls.forEach(learnAssetUrl));
+void listProfileAssetUrls()
+    .then((urls) => urls.forEach(learnAssetUrl))
+    .catch((e) => logger.error(`Learning stored asset links failed: ${e}`));
 await startSeasonsScheduler();
 
 (async () => {
     await startLeaderboardScheduler();
     await startMatchesScheduler();
+    startProfileSweep();
 })().catch((e) => logger.error(`Background startup failed: ${e}`));
 
 logger.debug('Server ready!');

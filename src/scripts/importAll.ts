@@ -1,8 +1,8 @@
 /**
- * Runs importMatches and importLeaderboards for every src/data/season_<N> folder.
- * N is the real season number; our season id is N - 1.
+ * Runs importMatches, importLeaderboards and importProfiles for every src/data/season_<N>
+ * folder (matches.json, lb.json, players.json). N is the real season number; our season id is N - 1.
  *
- *   bun run src/scripts/importAll.ts [--from=31] [--to=46] [--only=matches|lb] [--dry-run] [--force]
+ *   bun run src/scripts/importAll.ts [--from=31] [--to=46] [--only=matches|lb|players] [--dry-run] [--force]
  *
  * --force applies to leaderboards only (replace a season already stored as final).
  * Every step can be re-run safely: matches already stored are not duplicated.
@@ -20,7 +20,7 @@ const args = Object.fromEntries(
 );
 const from = Number(args.from ?? 0);
 const to = Number(args.to ?? Infinity);
-const only = args.only as 'matches' | 'lb' | undefined;
+const only = args.only as 'matches' | 'lb' | 'players' | undefined;
 const dryRun = args['dry-run'] === 'true';
 const force = args.force === 'true';
 
@@ -36,6 +36,13 @@ const jobs = [
         file: 'lb.json',
         script: 'src/scripts/importLeaderboards.ts',
         extra: force ? ['--force'] : [],
+    },
+    {
+        // after the leaderboards: player codes get the season's names first
+        kind: 'players',
+        file: 'players.json',
+        script: 'src/scripts/importProfiles.ts',
+        extra: [] as string[],
     },
 ].filter((job) => !only || job.kind === only);
 

@@ -753,7 +753,7 @@ export async function getAllStoredMatches(seasonId: number) {
 }
 
 // ---------------------------------------------------------------------------
-// One player's season, from the stored matches
+// One player's season, from the stored matches (streaks: see the stored profile instead)
 // ---------------------------------------------------------------------------
 
 export async function getSeasonStats(userId: string, seasonId: number) {
@@ -774,8 +774,6 @@ export async function getSeasonStats(userId: string, seasonId: number) {
     let losses = 0;
     let draws = 0;
     let other = 0;
-    let streak = 0;
-    let bestStreak = 0;
     const heroes = new Map<string, { hero: string; played: number; wins: number }>();
 
     for (const doc of docs) {
@@ -787,14 +785,11 @@ export async function getSeasonStats(userId: string, seasonId: number) {
 
         if (result === 'win') {
             wins++;
-            streak++;
-            bestStreak = Math.max(bestStreak, streak);
             hero.played++;
             hero.wins++;
         } else if (result === 'lose' || result === 'draw') {
             if (result === 'lose') losses++;
             else draws++;
-            streak = 0;
             hero.played++;
         } else {
             other++; // cancelled or lobby disconnect: not a played game
@@ -810,8 +805,6 @@ export async function getSeasonStats(userId: string, seasonId: number) {
         losses,
         draws,
         other,
-        winStreak: streak,
-        bestWinStreak: bestStreak,
         heroes: await Promise.all(
             [...heroes.values()]
                 .filter((h) => h.played > 0)

@@ -14,10 +14,29 @@ import { logger } from '@/utils/logger';
  * shift the meaning of matches already stored (what corrupted the old `season<N>` data).
  */
 
-export type CodeKind = 'hero' | 'tower' | 'map' | 'result';
+/** Kinds packed into a stored match: each has a fixed number of bits (CODE_BITS). */
+export type MatchCodeKind = 'hero' | 'tower' | 'map' | 'result';
+/**
+ * Kinds used by stored profiles (profileStore.ts). No bit limit: they are stored as plain numbers.
+ * `unit` is a profile's tower list (heroes included), kept apart from `tower` so it never
+ * spends the 6 bits of the match towers.
+ */
+export type ProfileCodeKind =
+    | 'avatar'
+    | 'banner'
+    | 'border'
+    | 'title'
+    | 'badge'
+    | 'arena'
+    | 'unit'
+    | 'bloon'
+    | 'accolade'
+    | 'guild';
+export type CodeKind = MatchCodeKind | ProfileCodeKind;
 
 /** Bits reserved for each kind in a packed match (see matchStore.ts). */
-export const CODE_BITS: Record<CodeKind, number> = { hero: 7, tower: 6, map: 7, result: 3 };
+export const CODE_BITS: Record<MatchCodeKind, number> = { hero: 7, tower: 6, map: 7, result: 3 };
+const isMatchKind = (kind: CodeKind): kind is MatchCodeKind => kind in CODE_BITS;
 
 interface CodeDoc {
     _id: string;
@@ -40,7 +59,22 @@ interface PlayerEntry {
 const codesCollection = () => mongoose.connection.collection<CodeDoc>('codes');
 const playersCollection = () => mongoose.connection.collection<PlayerDoc>('player_codes');
 
-const kinds: CodeKind[] = ['hero', 'tower', 'map', 'result'];
+const kinds: CodeKind[] = [
+    'hero',
+    'tower',
+    'map',
+    'result',
+    'avatar',
+    'banner',
+    'border',
+    'title',
+    'badge',
+    'arena',
+    'unit',
+    'bloon',
+    'accolade',
+    'guild',
+];
 const byName = Object.fromEntries(kinds.map((k) => [k, new Map<string, number>()])) as Record<
     CodeKind,
     Map<string, number>
@@ -169,13 +203,15 @@ export function ensureCodes(kind: CodeKind, names: Iterable<string>): Promise<vo
             const name = _id.slice(kind.length + 1);
             byName[kind].set(name, c);
             byCode[kind].set(c, name);
-            if (c >= 2 ** CODE_BITS[kind]) {
+            if (isMatchKind(kind) && c >= 2 ** CODE_BITS[kind]) {
                 logger.error(
                     `Code book: ${kind} "${name}" got code ${c}, past the ${CODE_BITS[kind]}-bit limit. ` +
                         `Matches using it are skipped until CODE_BITS.${kind} is raised (needs a new storage format).`,
                 );
-            } else {
+            } else if (isMatchKind(kind)) {
                 logger.info(`Code book: new ${kind} "${name}" = ${c}`);
+            } else {
+                logger.debug(`Code book: new ${kind} "${name}" = ${c}`);
             }
         }
     });
@@ -277,6 +313,8 @@ export function ensurePlayers(
 
 export const codeOf = (kind: CodeKind, name: string) => byName[kind].get(name);
 export const nameOf = (kind: CodeKind, code: number) => byCode[kind].get(code) ?? 'Unknown';
+/** like nameOf, but undefined for a code we don't know */
+export const findName = (kind: CodeKind, code: number) => byCode[kind].get(code);
 export const namesOf = (kind: CodeKind) => [...byName[kind].keys()];
 export const playerCodeOf = (userId: string) => playerByUser.get(userId);
 export const playerOf = (code: number) => playerByCode.get(code);
