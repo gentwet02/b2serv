@@ -817,6 +817,44 @@ export async function getSeasonStats(userId: string, seasonId: number) {
     };
 }
 
+/**
+ * A player's wins, draws and losses in every stored season, newest first (seasons without a
+ * played game are left out). Same games as the leaderboard columns (HoM vs HoM only);
+ * cancelled games and lobby disconnects aren't counted. Cached 5 minutes.
+ */
+export function getPlayerSeasonRecords(userId: string) {
+    return cached(`seasons:${userId}`, async () => {
+        await loadCodeBook();
+        const code = playerCodeOf(userId);
+        if (code === undefined) return [];
+        const seasonIds = await listMatchSeasons();
+        const rows = await Promise.all(
+            seasonIds.map(async (seasonId) => {
+                await ensureIndexes(seasonId);
+                const docs = await collection(seasonId)
+                    .find({ $or: [{ a: code }, { b: code }] }, { projection: { a: 1, d: 1 } })
+                    .toArray();
+                let wins = 0;
+                let losses = 0;
+                let draws = 0;
+                for (const doc of docs) {
+                    const leftResult = nameOf('result', doc.d % 2 ** CODE_BITS.result);
+                    const result =
+                        doc.a === code ? leftResult : (opposingResult[leftResult] ?? leftResult);
+                    if (result === 'win') wins++;
+                    else if (result === 'lose') losses++;
+                    else if (result === 'draw') draws++;
+                }
+                return { seasonId, wins, draws, losses };
+            }),
+        );
+        return rows
+            .filter((r) => r.wins + r.draws + r.losses > 0)
+            .sort((a, b) => b.seasonId - a.seasonId);
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Head to head: a player against other players, only the games they played each other
 // ---------------------------------------------------------------------------
 

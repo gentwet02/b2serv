@@ -8,6 +8,7 @@ import {
     getSeasonRank,
 } from '@/services/leaderboard';
 import {
+    getPlayerSeasonRecords,
     getSeasonStats,
     headToHead,
     listMatchSeasons,
@@ -29,7 +30,8 @@ import { VersusSeason } from '@/types/season';
  *
  * GET /users/:id           stored profile (NK body + our season records), never asks NK
  * GET /users/:id/matches   NK's latest matches (fallback when we stored none), rate limited
- * GET /users/:id/season    season record: stored profile (W/D/L, streaks) + stored matches (heroes)
+ * GET /users/:id/season    season record: stored matches (W/D/L, heroes) + stored profile (streaks)
+ * GET /users/:id/seasons   W/D/L in every stored season, from the stored matches
  * GET /users/:id/ranks     rank in every stored season, best end-of-season finish
  * GET /users/:id/compare   the player against the season's top 10, or ?with=id1,id2…
  * GET /users/:id/versus    head to head against one player or a leaderboard range
@@ -349,6 +351,20 @@ users.get('/:id/opponents', async (c) => {
     } catch (error) {
         logger.error(`Opponents of ${id} failed: ${error}`);
         const message = 'Could not list the opponents.';
+        return c.json({ message, error: message }, 500);
+    }
+});
+
+/** GET /users/:id/seasons: wins, draws, losses per season, newest first (stored matches). */
+users.get('/:id/seasons', async (c) => {
+    const id = c.req.param('id');
+    if (!USER_ID.test(id)) return invalid(c);
+    try {
+        c.header('Cache-Control', 'public, max-age=60');
+        return c.json({ seasons: await getPlayerSeasonRecords(id) });
+    } catch (error) {
+        logger.error(`Season records of ${id} failed: ${error}`);
+        const message = 'Could not load the season records.';
         return c.json({ message, error: message }, 500);
     }
 });
