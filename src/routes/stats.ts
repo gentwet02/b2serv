@@ -12,7 +12,7 @@ export const stats = new Hono();
 
 const USER_ID = /^[a-z0-9]{8,64}$/i;
 const NAME = /^[A-Za-z0-9_]{1,40}$/;
-const PLAYER_SCOPES = [...VERSUS_RANGES, 'everyone'] as const;
+const PLAYER_SCOPES = VERSUS_RANGES;
 type PlayerScope = (typeof PLAYER_SCOPES)[number];
 
 /** Answers computed in the last 2 minutes (the cubes behind them are cached longer). */
@@ -23,9 +23,8 @@ const responses = new Map<string, { data: unknown; expires: number }>();
  * GET /stats: hero, tower, strat and map usage and win rates, from a group's side
  *   ?season=46 | all       default: live season
  *   &player=<id>           one player's games
- *   &players=t10|t25|t50|t100|t25p|t50p|t75p|all|everyone
+ *   &players=t10|t25|t50|t100|t25p|t50p|t75p|all
  *                          or a range of each season's leaderboard (default t25);
- *                          everyone: both sides of every stored game
  *   &band=1                only the ranks between the previous threshold and this one
  *   &map=oasis             a map key, both versions; oasis:classic | oasis:reversed for one
  *   &hero=Quincy           a hero base
@@ -45,7 +44,7 @@ stats.get('/', async (c) => {
     const scope: PlayerScope = (PLAYER_SCOPES as readonly string[]).includes(scopeParam)
         ? (scopeParam as PlayerScope)
         : 't25';
-    const band = !userId && scope !== 'everyone' && c.req.query('band') === '1';
+    const band = !userId && c.req.query('band') === '1';
     // "oasis" (classic and reversed), "oasis:classic" or "oasis:reversed"
     const map = parseMapFilter(c.req.query('map'));
     // "Quincy" (any variant) or "Quincy:Quincy_Cyber", like /matches-history
@@ -81,7 +80,7 @@ stats.get('/', async (c) => {
 
     try {
         await loadCodeBook();
-        if (seasons.length === 1 && scope !== 'everyone' && !userId) {
+        if (seasons.length === 1 && !userId) {
             const season = getSeasonById(seasons[0]!.seasonId);
             if (season) await readLeaderboard(season);
         }
@@ -100,7 +99,6 @@ stats.get('/', async (c) => {
                     groupKey: `p:${playerCode ?? userId}`,
                 };
             }
-            if (scope === 'everyone') return { ...base, codes: null, groupKey: 'everyone' };
             const size = getLeaderboardSize(season.seasonId);
             if (size === null) {
                 missing.push(season.seasonId);
@@ -118,7 +116,7 @@ stats.get('/', async (c) => {
             ...data,
             season: seasonParam === 'all' ? 'all' : seasons[0]!.seasonId,
             seasonName: seasonParam === 'all' ? 'All seasons' : seasons[0]!.name,
-            mode: userId ? 'player' : scope === 'everyone' ? 'everyone' : 'top',
+            mode: userId ? 'player' : 'top',
             players: userId ? null : scope,
             band,
             player: userId

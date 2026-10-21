@@ -13,11 +13,27 @@ export function heroBase(hero: string, known: Iterable<string> = HERO_BASES): st
 }
 
 /**
+ * Maps NK renamed over time: old id → current id (castle ruins was "le_ruins" in seasons 33–35,
+ * salmon ladder was "salmon_pool", bot factory was "bloon_bot_factory").
+ */
+export const MAP_RENAMES: Record<string, string> = {
+    le_ruins: 'castle_ruins',
+    salmon_pool: 'salmon_ladder',
+    bloon_bot_factory: 'bot_factory',
+};
+
+/** The current id of a map: "salmon_pool" → "salmon_ladder" (the version suffix is kept). */
+export function currentMapId(map: string): string {
+    const [, base = map, suffix = ''] = /^(.*?)(_reversed)?$/.exec(map) ?? [];
+    return (MAP_RENAMES[base] ?? base) + suffix;
+}
+
+/**
  * NK has several ids for some maps ("banana_depot" and "banana_depot_scene",
- * "mayan" and "mayan_map_01", "offtide" and "off_tide"). They share one key.
+ * "mayan" and "mayan_map_01", "offtide" and "off_tide", renamed maps). They share one key.
  */
 export function mapKey(map: string): string {
-    return map
+    return currentMapId(map)
         .toLowerCase()
         .replace(/_(scene|map_01)$/, '')
         .replace(/_/g, '');

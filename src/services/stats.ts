@@ -12,7 +12,13 @@ import {
 } from '@/services/matchStore';
 import { getLiveSeason } from '@/services/seasons';
 import { logger } from '@/utils/logger';
-import { heroBase, mapBaseKey, mapVariant, type MapVariant } from '@/utils/matchLabels';
+import {
+    currentMapId,
+    heroBase,
+    mapBaseKey,
+    mapVariant,
+    type MapVariant,
+} from '@/utils/matchLabels';
 
 /**
  * Stats page: hero, tower, strat (hero + 3 towers) and map usage and win rates,
@@ -209,6 +215,7 @@ export async function computeStats(query: StatsQuery) {
     const byLoadout = new Map<string, Wld>();
     const byVariant = new Map<string, Wld>(); // raw hero ("Quincy_Cyber")
     const byTrio = new Map<string, Wld>(); // the 3 towers, sorted, hero ignored
+    const byLoadoutVariant = new Map<string, Wld>(); // "Quincy_Cyber|Alchemist,Druid,Ninja"
     const heroOptions = new Map<string, Map<string, number>>(); // base → raw hero → games
     const towerOptions = new Map<string, number>();
     const mapOptions = new Map<string, Map<MapVariant, number>>(); // base → variant → games
@@ -259,6 +266,7 @@ export async function computeStats(query: StatsQuery) {
             tally(byLoadout, loadout.key, i, n);
             tally(byVariant, loadout.hero, i, n);
             tally(byTrio, loadout.towers.join(','), i, n);
+            tally(byLoadoutVariant, `${loadout.hero}|${loadout.towers.join(',')}`, i, n);
             const variants = heroVariants.get(loadout.base) ?? new Map<string, number>();
             add(variants, loadout.hero, n);
             heroVariants.set(loadout.base, variants);
@@ -280,7 +288,12 @@ export async function computeStats(query: StatsQuery) {
     };
     for (const [key, raws] of mapNames) {
         const raw = top(raws) ?? key;
-        labels.maps[key] = { map: raw, image: (await getAssetUrl('map', raw)) ?? null };
+        // renamed maps show their current name
+        const current = currentMapId(raw);
+        labels.maps[key] = {
+            map: current,
+            image: (await getAssetUrl('map', current)) ?? (await getAssetUrl('map', raw)) ?? null,
+        };
     }
     for (const [base, variants] of heroVariants) {
         const raw = variants.has(base) ? base : (top(variants) ?? base);
@@ -308,6 +321,9 @@ export async function computeStats(query: StatsQuery) {
         towers: rows(byTower),
         loadouts: rows(byLoadout, MAX_LOADOUTS),
         loadoutCount: byLoadout.size,
+        /** strats with the exact hero variant: "Quincy_Cyber|Alchemist,Druid,Ninja" */
+        loadoutVariants: rows(byLoadoutVariant, MAX_LOADOUTS),
+        loadoutVariantCount: byLoadoutVariant.size,
         /** strats without the hero: "Alchemist,Druid,Ninja" */
         trios: rows(byTrio, MAX_LOADOUTS),
         trioCount: byTrio.size,

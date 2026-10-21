@@ -31,6 +31,7 @@ import {
     heroBase,
     mapBaseKey,
     mapFits,
+    currentMapId,
     mapKey,
     mapVariant,
     parseMapFilter,
@@ -610,9 +611,13 @@ export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptio
             await Promise.all(
                 [...byMap.values()].map(async ({ key, map, count, variants }) => ({
                     key,
-                    map,
+                    // renamed maps show their current name
+                    map: currentMapId(map),
                     count,
-                    image: (await getAssetUrl('map', map)) ?? null,
+                    image:
+                        (await getAssetUrl('map', currentMapId(map))) ??
+                        (await getAssetUrl('map', map)) ??
+                        null,
                     variants: [...variants]
                         .map(([variant, n]) => ({ variant, count: n }))
                         .sort((a, b) => a.variant.localeCompare(b.variant)),
@@ -1021,7 +1026,15 @@ export function labeler() {
         async labels() {
             const maps: Record<string, { map: string; image: string | null }> = {};
             for (const [key, map] of mapNames) {
-                maps[key] = { map, image: (await getAssetUrl('map', map)) ?? null };
+                // renamed maps show their current name
+                const current = currentMapId(map);
+                maps[key] = {
+                    map: current,
+                    image:
+                        (await getAssetUrl('map', current)) ??
+                        (await getAssetUrl('map', map)) ??
+                        null,
+                };
             }
             const heroes: Record<string, { hero: string; portrait: string | null }> = {};
             for (const [base, hero] of heroVariants) {
