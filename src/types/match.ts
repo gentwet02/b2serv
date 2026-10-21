@@ -108,5 +108,12 @@ export interface SideOptions {
 export interface FilterOptions extends SideOptions {
     /** same player mode: the options of side 1 and side 2 */
     sides?: [SideOptions, SideOptions];
-    maps: { key: string; map: string; count: number }[];
+    /** base maps: classic and reversed versions together, counted apart in `variants` */
+    maps: {
+        key: string;
+        map: string;
+        count: number;
+        image: string | null;
+        variants: { variant: 'classic' | 'reversed'; count: number }[];
+    }[];
 }

@@ -65,7 +65,11 @@ function parseFilter(c: Context, seasonId: number): FacetFilter {
         playerId: playerId && /^[a-z0-9]{8,64}$/i.test(playerId) ? playerId : undefined,
         heroes: parseHeroes(c.req.query('heroes')),
         towers: list(c.req.query('towers'), MAX_TOWERS),
-        map: c.req.query('map')?.replace(/[^a-z0-9]/g, '') || undefined,
+        map:
+            c.req
+                .query('map')
+                ?.replace(/[^a-z0-9:]/g, '')
+                .slice(0, 60) || undefined,
         sameSide: c.req.query('sameSide') === '1',
         player2: c.req.query('player2')?.trim().slice(0, 64) || undefined,
         heroes2: parseHeroes(c.req.query('heroes2')).slice(0, 1),
@@ -81,7 +85,8 @@ function parseFilter(c: Context, seasonId: number): FacetFilter {
  *   &playerId=<id>                 one player's matches (profiles)
  *   &heroes=Quincy,Adora:Adora_Fateweaver   up to 2; "Base" = any variant
  *   &towers=Druid,DartMonkey       up to 6, all of them in the match
- *   &map=thinice                   a map key from /filters
+ *   &map=oasis                     a map key from /filters (both versions),
+ *                                  oasis:classic | oasis:reversed for one
  *   &sameSide=1                    filter each side separately: player, heroes (≤ 1) and
  *                                  towers (≤ 3) describe one side, and
  *   &player2=&heroes2=&towers2=    the other side (either side may be empty)

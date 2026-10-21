@@ -27,7 +27,15 @@ import type {
 } from '@/types/match';
 import { extractUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
-import { heroBase, mapKey } from '@/utils/matchLabels';
+import {
+    heroBase,
+    mapBaseKey,
+    mapFits,
+    mapKey,
+    mapVariant,
+    parseMapFilter,
+    type MapVariant,
+} from '@/utils/matchLabels';
 import { HERO_BASES } from '@/data/towers';
 import { VersusSeason } from '@/types/season';
 
@@ -56,7 +64,7 @@ const LIMIT = {
 const X = { hero: 0, t1: 7, t2: 13, t3: 19 };
 const D = { result: 0, map: 3, round: 10, duration: 17 };
 
-const opposingResult: Record<string, string> = {
+export const opposingResult: Record<string, string> = {
     win: 'lose',
     lose: 'win',
     lobbyDC: 'opponentLobbyDC',
@@ -70,7 +78,7 @@ const opposingResult: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 const collectionName = (seasonId: number) => `matches_s${seasonId}`;
-const collection = (seasonId: number) =>
+export const collection = (seasonId: number) =>
     mongoose.connection.collection<StoredMatchDoc>(collectionName(seasonId));
 
 const indexed = new Set<number>();
@@ -130,7 +138,7 @@ function packInfo(match: Match): number | null {
     return result + map * 2 ** D.map + round * 2 ** D.round + duration * 2 ** D.duration;
 }
 
-const unpackLoadout = (x: number) => ({
+export const unpackLoadout = (x: number) => ({
     hero: nameOf('hero', x % 2 ** CODE_BITS.hero),
     towers: [X.t1, X.t2, X.t3].map((shift) =>
         nameOf('tower', Math.floor(x / 2 ** shift) % 2 ** CODE_BITS.tower),
@@ -155,7 +163,7 @@ const SIDES = {
 const heroExpr = (loadout: string) => bitsOf(loadout, X.hero, CODE_BITS.hero);
 const towersExpr = (loadout: string) =>
     [X.t1, X.t2, X.t3].map((s) => bitsOf(loadout, s, CODE_BITS.tower));
-const mapExpr = bitsOf('$d', D.map, CODE_BITS.map);
+export const mapExpr = bitsOf('$d', D.map, CODE_BITS.map);
 const roundExpr = bitsOf('$d', D.round, ROUND_BITS);
 
 // ---------------------------------------------------------------------------
@@ -289,7 +297,7 @@ export function canUseSameSide(
     );
 }
 
-function knownHeroBases() {
+export function knownHeroBases() {
     return new Set<string>([...HERO_BASES, ...namesOf('hero').filter((h) => !h.includes('_'))]);
 }
 
@@ -350,9 +358,13 @@ function buildQuery(filter: FacetFilter): BuiltQuery | null {
 
     let mapCodes: number[] | null = null;
     if (filter.map) {
-        mapCodes = namesOf('map')
-            .filter((m) => mapKey(m) === filter.map)
-            .map((m) => codeOf('map', m)!);
+        // "oasis" (both versions), "oasis:classic" or "oasis:reversed"
+        const wanted = parseMapFilter(filter.map);
+        mapCodes = wanted
+            ? namesOf('map')
+                  .filter((m) => mapFits(m, wanted))
+                  .map((m) => codeOf('map', m)!)
+            : [];
         if (mapCodes.length === 0) return null;
     }
 
@@ -571,14 +583,21 @@ export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptio
         ),
     ]);
 
-    const byMap = new Map<string, { key: string; map: string; count: number; best: number }>();
+    // one entry per base map, its classic and reversed versions counted apart
+    const byMap = new Map<
+        string,
+        { key: string; map: string; count: number; best: number; variants: Map<MapVariant, number> }
+    >();
     for (const { _id, n } of mapCounts) {
         const map = nameOf('map', _id);
-        const key = mapKey(map);
-        const entry = byMap.get(key) ?? { key, map, count: 0, best: -1 };
+        const key = mapBaseKey(map);
+        const variant = mapVariant(map);
+        const entry = byMap.get(key) ?? { key, map, count: 0, best: -1, variants: new Map() };
         entry.count += n;
-        // show the id with the most matches (usually the current version of the map)
-        if (n > entry.best) Object.assign(entry, { map, best: n });
+        entry.variants.set(variant, (entry.variants.get(variant) ?? 0) + n);
+        // show the classic id with the most matches (usually the current version of the map)
+        const score = variant === 'classic' ? n : -1;
+        if (score > entry.best || entry.best === -1) Object.assign(entry, { map, best: score });
         byMap.set(key, entry);
     }
 
@@ -587,9 +606,19 @@ export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptio
         ...(sameSide && sides[1]
             ? { sides: [sides[0], sides[1]] as [SideOptions, SideOptions] }
             : {}),
-        maps: [...byMap.values()]
-            .map(({ key, map, count }) => ({ key, map, count }))
-            .sort((a, b) => a.key.localeCompare(b.key)),
+        maps: (
+            await Promise.all(
+                [...byMap.values()].map(async ({ key, map, count, variants }) => ({
+                    key,
+                    map,
+                    count,
+                    image: (await getAssetUrl('map', map)) ?? null,
+                    variants: [...variants]
+                        .map(([variant, n]) => ({ variant, count: n }))
+                        .sort((a, b) => a.variant.localeCompare(b.variant)),
+                })),
+            )
+        ).sort((a, b) => a.key.localeCompare(b.key)),
     };
     if (optionsCache.size > 500) optionsCache.clear();
     optionsCache.set(cacheKey, { data, expires: Date.now() + OPTIONS_TTL_MS });
@@ -859,8 +888,8 @@ export function getPlayerSeasonRecords(userId: string) {
 // ---------------------------------------------------------------------------
 
 /** wins, losses, draws, always from the profile player's side */
-type Wld = [number, number, number];
-type WldIndex = 0 | 1 | 2;
+export type Wld = [number, number, number];
+export type WldIndex = 0 | 1 | 2;
 
 /** A map key or a loadout key ("Quincy|Alchemist,Druid,Ninja"), with the record on it. */
 interface H2hPick {
@@ -892,7 +921,7 @@ export interface OpponentInput {
  */
 export const H2H_MIN_GAMES = { opponent: 2, total: 3 } as const;
 
-const RESULT_INDEX: Record<string, WldIndex> = { win: 0, lose: 1, draw: 2 };
+export const RESULT_INDEX: Record<string, WldIndex> = { win: 0, lose: 1, draw: 2 };
 
 const newH2hTally = (): H2hTally => ({
     record: [0, 0, 0],
@@ -961,7 +990,7 @@ function summarize(tally: H2hTally, min: number) {
 }
 
 /** Map and loadout keys of a set of games, and the labels / images the client needs for them. */
-function labeler() {
+export function labeler() {
     const known = knownHeroBases();
     const bases = new Map<string, string>();
     const mapNames = new Map<string, string>(); // key → a raw NK id

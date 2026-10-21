@@ -5,3 +5,4 @@ export { matches } from './matches';
 export { matchesHistory } from './matchesHistory';
 export { players } from './players';
 export { users } from './users';
+export { stats } from './stats';

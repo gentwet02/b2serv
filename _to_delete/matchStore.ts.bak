@@ -1,0 +1,1361 @@
+import mongoose from 'mongoose';
+import { playerNames } from '@/data/playerNames';
+import {
+    CODE_BITS,
+    codeOf,
+    ensureCodes,
+    ensurePlayers,
+    findPlayerCodes,
+    loadCodeBook,
+    nameOf,
+    namesOf,
+    playerCodeOf,
+    playerOf,
+} from '@/services/codeBook';
+import { getAssetUrl } from '@/services/matchMeta';
+import type {
+    BuiltQuery,
+    FacetFilter,
+    FilterOptions,
+    HeroPick,
+    Match,
+    MatchesFilter,
+    MatchPlayer,
+    MatchSort,
+    SideOptions,
+    StoredMatchDoc,
+} from '@/types/match';
+import { extractUserId } from '@/utils/helpers';
+import { logger } from '@/utils/logger';
+import { heroBase, mapKey } from '@/utils/matchLabels';
+import { HERO_BASES } from '@/data/towers';
+import { VersusSeason } from '@/types/season';
+
+/**
+ * Compact match storage: one collection per season, `matches_s<season>`, 6 small numbers per match.
+ *
+ *   _id  match id (hex ids stored as binary: half the bytes)
+ *   t    first seen by the crawler
+ *   a, b left / right player code            (codeBook player_codes)
+ *   x, y left / right loadout   hero(7 bits) | tower(6) | tower(6) | tower(6)
+ *   d    match info             result(3)    | map(7)   | round(7) | duration(14)
+ *        duration sits in the top bits, so sorting on d sorts by duration
+ *
+ * Each value is range-checked before packing: nothing can spill into its neighbour.
+ * Only the left player's result is stored; the right one is its opposite/equal.
+ * About 73 bytes per match, 3 small indexes.
+ */
+
+const ROUND_BITS = 7;
+const DURATION_BITS = 14;
+const LIMIT = {
+    round: 2 ** ROUND_BITS - 1, // 127
+    duration: 2 ** DURATION_BITS - 1, // 16383 s, 4.5 h
+};
+// bit offsets
+const X = { hero: 0, t1: 7, t2: 13, t3: 19 };
+const D = { result: 0, map: 3, round: 10, duration: 17 };
+
+export const opposingResult: Record<string, string> = {
+    win: 'lose',
+    lose: 'win',
+    lobbyDC: 'opponentLobbyDC',
+    opponentLobbyDC: 'lobbyDC',
+    draw: 'draw',
+    cancelled: 'cancelled',
+};
+
+// ---------------------------------------------------------------------------
+// Collections
+// ---------------------------------------------------------------------------
+
+const collectionName = (seasonId: number) => `matches_s${seasonId}`;
+export const collection = (seasonId: number) =>
+    mongoose.connection.collection<StoredMatchDoc>(collectionName(seasonId));
+
+const indexed = new Set<number>();
+async function ensureIndexes(seasonId: number) {
+    if (indexed.has(seasonId)) return;
+    indexed.add(seasonId);
+    try {
+        await collection(seasonId).createIndexes([
+            { key: { t: -1 } },
+            { key: { a: 1, t: -1 } },
+            { key: { b: 1, t: -1 } },
+        ]);
+    } catch (error) {
+        indexed.delete(seasonId);
+        logger.error(`Creating indexes on ${collectionName(seasonId)} failed: ${error}`);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Packing
+// ---------------------------------------------------------------------------
+
+const HEX_ID = /^(?:[0-9a-f]{2}){4,}$/;
+const packId = (id: string) =>
+    HEX_ID.test(id) ? new mongoose.mongo.Binary(Buffer.from(id, 'hex')) : id;
+const unpackId = (id: StoredMatchDoc['_id']) => (typeof id === 'string' ? id : id.toString('hex'));
+
+const fits = (value: number | undefined, bits: number): value is number =>
+    value !== undefined && Number.isInteger(value) && value >= 0 && value < 2 ** bits;
+
+function packLoadout(player: MatchPlayer): number | null {
+    const hero = codeOf('hero', player.hero);
+    const towers = [player.towerone, player.towertwo, player.towerthree].map((t) =>
+        codeOf('tower', t),
+    );
+    if (!fits(hero, CODE_BITS.hero) || !towers.every((t) => fits(t, CODE_BITS.tower))) return null;
+    return hero + towers[0]! * 2 ** X.t1 + towers[1]! * 2 ** X.t2 + towers[2]! * 2 ** X.t3;
+}
+
+let unusualRounds = 0;
+
+function packInfo(match: Match): number | null {
+    const result = codeOf('result', match.playerLeft.result);
+    const map = codeOf('map', match.map);
+    const round = Math.round(match.endRound);
+    const duration = Math.round(match.duration);
+    if (!fits(result, CODE_BITS.result) || !fits(map, CODE_BITS.map)) return null;
+    if (!(round >= 0 && round <= LIMIT.round) || !(duration >= 0 && duration <= LIMIT.duration)) {
+        logger.warn(
+            `Match ${match.id} skipped: round ${match.endRound} / duration ${match.duration} out of range`,
+        );
+        return null;
+    }
+    if (round > 60 && unusualRounds++ < 20) {
+        logger.warn(`Match ${match.id}: end round ${round} (${match.gametype}, ${match.map})`);
+    }
+    return result + map * 2 ** D.map + round * 2 ** D.round + duration * 2 ** D.duration;
+}
+
+const unpackLoadout = (x: number) => ({
+    hero: nameOf('hero', x % 2 ** CODE_BITS.hero),
+    towers: [X.t1, X.t2, X.t3].map((shift) =>
+        nameOf('tower', Math.floor(x / 2 ** shift) % 2 ** CODE_BITS.tower),
+    ),
+});
+
+const unpackInfo = (d: number) => ({
+    result: nameOf('result', d % 2 ** CODE_BITS.result),
+    map: nameOf('map', Math.floor(d / 2 ** D.map) % 2 ** CODE_BITS.map),
+    endRound: Math.floor(d / 2 ** D.round) % 2 ** ROUND_BITS,
+    duration: Math.floor(d / 2 ** D.duration),
+});
+
+// the same unpacking as MongoDB expressions
+const bitsOf = (field: string, shift: number, bits: number) => ({
+    $mod: [shift ? { $floor: { $divide: [field, 2 ** shift] } } : field, 2 ** bits],
+});
+const SIDES = {
+    left: { player: '$a', loadout: '$x' },
+    right: { player: '$b', loadout: '$y' },
+} as const;
+const heroExpr = (loadout: string) => bitsOf(loadout, X.hero, CODE_BITS.hero);
+const towersExpr = (loadout: string) =>
+    [X.t1, X.t2, X.t3].map((s) => bitsOf(loadout, s, CODE_BITS.tower));
+export const mapExpr = bitsOf('$d', D.map, CODE_BITS.map);
+const roundExpr = bitsOf('$d', D.round, ROUND_BITS);
+
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+export async function saveCrawledMatches(
+    matches: Match[],
+    seasonId: number,
+    seenAt?: (match: Match) => number | undefined,
+    { renamePlayers = true }: { renamePlayers?: boolean } = {},
+) {
+    if (matches.length === 0) return { inserted: 0, invalid: 0 };
+    await loadCodeBook();
+    await ensureIndexes(seasonId);
+
+    const sides = matches.flatMap((m) => [m.playerLeft, m.playerRight]);
+    await Promise.all([
+        ensureCodes(
+            'hero',
+            sides.map((p) => p.hero),
+        ),
+        ensureCodes(
+            'tower',
+            sides.flatMap((p) => [p.towerone, p.towertwo, p.towerthree]),
+        ),
+        ensureCodes(
+            'map',
+            matches.map((m) => m.map),
+        ),
+        ensureCodes(
+            'result',
+            matches.map((m) => m.playerLeft.result),
+        ),
+        ensurePlayers(
+            sides.map((p) => [extractUserId(p.profileURL), p.displayName]),
+            { rename: renamePlayers },
+        ),
+    ]);
+
+    const now = Math.floor(Date.now() / 60_000);
+    const docs: StoredMatchDoc[] = [];
+    let invalid = 0;
+    for (const match of matches) {
+        const a = playerCodeOf(extractUserId(match.playerLeft.profileURL));
+        const b = playerCodeOf(extractUserId(match.playerRight.profileURL));
+        const x = packLoadout(match.playerLeft);
+        const y = packLoadout(match.playerRight);
+        const d = packInfo(match);
+        if (
+            !match.id ||
+            a === undefined ||
+            b === undefined ||
+            x === null ||
+            y === null ||
+            d === null
+        ) {
+            invalid++;
+            continue;
+        }
+        const seen = seenAt?.(match);
+        const t = seen !== undefined && Number.isInteger(seen) && seen > 0 ? seen : now;
+        docs.push({ _id: packId(match.id), t, a, b, x, y, d });
+    }
+    if (invalid > 0) logger.warn(`${invalid} match(es) skipped: missing data or code out of range`);
+    if (docs.length === 0) return { inserted: 0, invalid };
+
+    const result = await collection(seasonId).bulkWrite(
+        docs.map(({ t, ...doc }) => ({
+            updateOne: {
+                filter: { _id: doc._id },
+                update: { $setOnInsert: doc, $min: { t } },
+                upsert: true,
+            },
+        })),
+        { ordered: false },
+    );
+    if (result.upsertedCount > 0) optionsCache.clear();
+    return { inserted: result.upsertedCount, invalid };
+}
+
+// ---------------------------------------------------------------------------
+// Reading back to NK's shape
+// ---------------------------------------------------------------------------
+
+async function side(playerCode: number, loadout: number, result: string) {
+    const player = playerOf(playerCode);
+    const { hero, towers } = unpackLoadout(loadout);
+    const userId = player?.u ?? '';
+    return {
+        displayName: player?.n ?? 'Unknown player',
+        alias: playerNames[userId],
+        hero,
+        heroPortrait: await getAssetUrl('hero', hero),
+        towerone: towers[0],
+        towertwo: towers[1],
+        towerthree: towers[2],
+        result,
+        profileURL: `https://data.ninjakiwi.com/battles2/users/${userId}`,
+    };
+}
+
+/** NK's match shape, plus seenAt and real names, for the client. */
+export async function toApiMatch(doc: StoredMatchDoc) {
+    const info = unpackInfo(doc.d);
+    return {
+        id: unpackId(doc._id),
+        gametype: 'Ranked',
+        map: info.map,
+        mapURL: await getAssetUrl('map', info.map),
+        endRound: info.endRound,
+        duration: info.duration,
+        playerLeft: await side(doc.a, doc.x, info.result),
+        playerRight: await side(doc.b, doc.y, opposingResult[info.result] ?? info.result),
+        seenAt: new Date(doc.t * 60_000).toISOString(),
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Query building (shared by the match list and the filter options)
+// ---------------------------------------------------------------------------
+
+export function canUseSameSide(
+    filter: Pick<MatchesFilter, 'heroes' | 'towers' | 'heroes2' | 'towers2'>,
+) {
+    return (
+        filter.heroes.length <= 1 &&
+        filter.towers.length <= 3 &&
+        filter.heroes2.length <= 1 &&
+        filter.towers2.length <= 3
+    );
+}
+
+export function knownHeroBases() {
+    return new Set<string>([...HERO_BASES, ...namesOf('hero').filter((h) => !h.includes('_'))]);
+}
+
+const heroCodesFor = (pick: HeroPick) => {
+    const names = pick.hero
+        ? [pick.hero]
+        : namesOf('hero').filter((name) => heroBase(name, knownHeroBases()) === pick.base);
+    return names.map((n) => codeOf('hero', n)).filter((c): c is number => c !== undefined);
+};
+
+/** Player codes for a name part and/or an exact id. null: no player filter, []: nobody. */
+function resolvePlayers(name?: string, id?: string): number[] | null {
+    let codes: number[] | null = null;
+    if (id) {
+        const code = playerCodeOf(id);
+        codes = code === undefined ? [] : [code];
+    }
+    if (name) {
+        const found = findPlayerCodes(name);
+        codes = codes ? codes.filter((c) => found.includes(c)) : found;
+    }
+    return codes;
+}
+
+/** One side's filters in same player mode. */
+interface SideSpec {
+    players: number[] | null;
+    heroes: number[] | null;
+    towers: number[];
+}
+
+/** The conditions a side's filters put on one player and loadout. */
+function sideConditions(spec: SideSpec, { player, loadout }: (typeof SIDES)[keyof typeof SIDES]) {
+    const all: object[] = [];
+    if (spec.players) all.push({ $in: [player, spec.players] });
+    if (spec.heroes) all.push({ $in: [heroExpr(loadout), spec.heroes] });
+    if (spec.towers.length) all.push({ $setIsSubset: [spec.towers, towersExpr(loadout)] });
+    return all;
+}
+
+const allOf = (conditions: object[]) =>
+    conditions.length === 0 ? null : conditions.length === 1 ? conditions[0] : { $and: conditions };
+
+/** Filter → MongoDB match. null when nothing can match (unknown hero, player…). */
+function buildQuery(filter: FacetFilter): BuiltQuery | null {
+    const sameSide = filter.sameSide && canUseSameSide(filter);
+
+    const heroSets = filter.heroes.map(heroCodesFor);
+    const heroSets2 = sameSide ? filter.heroes2.map(heroCodesFor) : [];
+    if ([...heroSets, ...heroSets2].some((set) => set.length === 0)) return null;
+
+    const towerCodesOf = (towers: string[]) => towers.map((t) => codeOf('tower', t));
+    const rawTowers = towerCodesOf(filter.towers);
+    const rawTowers2 = sameSide ? towerCodesOf(filter.towers2) : [];
+    if ([...rawTowers, ...rawTowers2].some((c) => c === undefined)) return null;
+    const towerCodes = rawTowers as number[];
+    const towerCodes2 = rawTowers2 as number[];
+
+    let mapCodes: number[] | null = null;
+    if (filter.map) {
+        mapCodes = namesOf('map')
+            .filter((m) => mapKey(m) === filter.map)
+            .map((m) => codeOf('map', m)!);
+        if (mapCodes.length === 0) return null;
+    }
+
+    const playerCodes = resolvePlayers(filter.player, filter.playerId);
+    const playerCodes2 = sameSide ? resolvePlayers(filter.player2) : null;
+    if (playerCodes?.length === 0 || playerCodes2?.length === 0) return null;
+
+    // indexed part: players
+    const match: Record<string, unknown> = {};
+    if (playerCodes && playerCodes2) {
+        match.$or = [
+            { a: { $in: playerCodes }, b: { $in: playerCodes2 } },
+            { a: { $in: playerCodes2 }, b: { $in: playerCodes } },
+        ];
+    } else if (playerCodes ?? playerCodes2) {
+        const codes = (playerCodes ?? playerCodes2)!;
+        match.$or = [{ a: { $in: codes } }, { b: { $in: codes } }];
+    }
+
+    // computed part: unpacked fields
+    const exprs: object[] = [];
+    if (mapCodes) exprs.push({ $in: [mapExpr, mapCodes] });
+
+    let sides: BuiltQuery['sides'] = null;
+    if (sameSide) {
+        const one: SideSpec = {
+            players: playerCodes,
+            heroes: heroSets[0] ?? null,
+            towers: towerCodes,
+        };
+        const two: SideSpec = {
+            players: playerCodes2,
+            heroes: heroSets2[0] ?? null,
+            towers: towerCodes2,
+        };
+        // side 1 can be the left or the right player, side 2 is then the other one
+        const straight = allOf([
+            ...sideConditions(one, SIDES.left),
+            ...sideConditions(two, SIDES.right),
+        ]);
+        const swapped = allOf([
+            ...sideConditions(one, SIDES.right),
+            ...sideConditions(two, SIDES.left),
+        ]);
+        if (straight && swapped) {
+            exprs.push({ $or: [straight, swapped] });
+            sides = { straight, swapped };
+        }
+    } else {
+        if (heroSets.length === 1) {
+            exprs.push({
+                $or: [
+                    { $in: [heroExpr('$x'), heroSets[0]] },
+                    { $in: [heroExpr('$y'), heroSets[0]] },
+                ],
+            });
+        } else if (heroSets.length === 2) {
+            // a matchup: one hero on each side
+            const [h1, h2] = heroSets;
+            exprs.push({
+                $or: [
+                    { $and: [{ $in: [heroExpr('$x'), h1] }, { $in: [heroExpr('$y'), h2] }] },
+                    { $and: [{ $in: [heroExpr('$x'), h2] }, { $in: [heroExpr('$y'), h1] }] },
+                ],
+            });
+        }
+        if (towerCodes.length) {
+            exprs.push({ $setIsSubset: [towerCodes, [...towersExpr('$x'), ...towersExpr('$y')]] });
+        }
+    }
+    if (exprs.length) match.$expr = exprs.length === 1 ? exprs[0] : { $and: exprs };
+    return { match, sides };
+}
+
+// ---------------------------------------------------------------------------
+// Filter options, counted with the other selected filters applied (facets)
+// ---------------------------------------------------------------------------
+
+type Count = { _id: number; n: number };
+/** same player mode: side 1 or side 2; undefined: both players */
+type Slot = 0 | 1 | undefined;
+
+const OPTIONS_TTL_MS = 60_000;
+const optionsCache = new Map<string, { data: FilterOptions; expires: number }>();
+
+async function countBy(
+    seasonId: number,
+    built: BuiltQuery | null,
+    project: object,
+): Promise<Count[]> {
+    if (!built) return [];
+    const pipeline: object[] = [];
+    if (Object.keys(built.match).length) pipeline.push({ $match: built.match });
+    pipeline.push(
+        { $project: { v: project } },
+        { $unwind: '$v' },
+        { $group: { _id: '$v', n: { $sum: 1 } } },
+    );
+    return collection(seasonId).aggregate<Count>(pipeline, { allowDiskUse: true }).toArray();
+}
+
+/** Values (each counted once per match) of both players, or only of one side's player. */
+function sideProjection(built: BuiltQuery, slot: Slot, values: (loadout: string) => object[]) {
+    if (!built.sides || slot === undefined) {
+        return { $setUnion: [[...values('$x'), ...values('$y')]] };
+    }
+    const { straight, swapped } = built.sides;
+    // straight: side 1 is the left player; swapped: side 1 is the right player
+    const [whenStraight, whenSwapped] = slot === 0 ? ['$x', '$y'] : ['$y', '$x'];
+    return {
+        $setUnion: [
+            { $cond: [straight, values(whenStraight), []] },
+            { $cond: [swapped, values(whenSwapped), []] },
+        ],
+    };
+}
+
+const heroesProjection = (built: BuiltQuery, slot: Slot) =>
+    sideProjection(built, slot, (loadout) => [heroExpr(loadout)]);
+const towersProjection = (built: BuiltQuery, slot: Slot) => sideProjection(built, slot, towersExpr);
+
+/** A selected hero, and the query counting its variants as if "any variant" was picked. */
+interface SelectedHero {
+    pick: HeroPick;
+    relaxed: BuiltQuery | null;
+}
+
+/** Heroes and towers of one side (or both), counted within the other filters. */
+async function sideOptions(
+    seasonId: number,
+    full: BuiltQuery | null,
+    selected: SelectedHero[],
+    slot: Slot,
+): Promise<SideOptions> {
+    const known = knownHeroBases();
+    const [heroCounts, towerCounts, ...relaxedHeroCounts] = await Promise.all([
+        full ? countBy(seasonId, full, heroesProjection(full, slot)) : Promise.resolve([]),
+        full ? countBy(seasonId, full, towersProjection(full, slot)) : Promise.resolve([]),
+        ...selected.map(({ pick, relaxed }) =>
+            pick.hero && relaxed
+                ? countBy(seasonId, relaxed, heroesProjection(relaxed, slot))
+                : Promise.resolve(null),
+        ),
+    ]);
+
+    // heroes: selected bases use their relaxed counts, the others the full ones
+    const byBase = new Map<string, SideOptions['heroes'][number]>();
+    const addHeroes = (counts: Count[], keep: (base: string) => boolean) => {
+        for (const { _id, n } of counts) {
+            const hero = nameOf('hero', _id);
+            const base = heroBase(hero, known);
+            if (!keep(base)) continue;
+            const entry = byBase.get(base) ?? { base, count: 0, variants: [] };
+            entry.count += n;
+            entry.variants.push({ hero, count: n });
+            byBase.set(base, entry);
+        }
+    };
+    addHeroes(heroCounts, (base) => !selected.some(({ pick }) => pick.base === base && pick.hero));
+    selected.forEach(({ pick }, i) => {
+        const counts = relaxedHeroCounts[i];
+        if (pick.hero && counts) addHeroes(counts, (base) => base === pick.base);
+    });
+
+    const heroes = await Promise.all(
+        [...byBase.values()].map(async (h) => ({
+            ...h,
+            variants: await Promise.all(
+                h.variants
+                    .sort((a, b) => b.count - a.count)
+                    .map(async (v) => ({ ...v, portrait: await getAssetUrl('hero', v.hero) })),
+            ),
+        })),
+    );
+
+    return {
+        heroes: heroes.sort((a, b) => a.base.localeCompare(b.base)),
+        towers: towerCounts
+            .map(({ _id, n }) => ({ tower: nameOf('tower', _id), count: n }))
+            .sort((a, b) => a.tower.localeCompare(b.tower)),
+    };
+}
+
+export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptions> {
+    const cacheKey = JSON.stringify(filter);
+    const hit = optionsCache.get(cacheKey);
+    if (hit && hit.expires > Date.now()) return hit.data;
+    await loadCodeBook();
+    const { seasonId } = filter;
+    const sameSide = filter.sameSide && canUseSameSide(filter);
+
+    const full = buildQuery(filter);
+    const withoutMap = buildQuery({ ...filter, map: undefined });
+    // a selected hero with a chosen variant: count its variants as if "any variant"
+    const selectedOf = (key: 'heroes' | 'heroes2'): SelectedHero[] =>
+        filter[key].map((pick, i) => {
+            if (!pick.hero) return { pick, relaxed: full };
+            const picks = filter[key].map((p, j) => (j === i ? { base: p.base } : p));
+            return {
+                pick,
+                relaxed: buildQuery(
+                    key === 'heroes' ? { ...filter, heroes: picks } : { ...filter, heroes2: picks },
+                ),
+            };
+        });
+
+    const [mapCounts, sides] = await Promise.all([
+        countBy(seasonId, withoutMap, [mapExpr]),
+        Promise.all(
+            sameSide
+                ? [
+                      sideOptions(seasonId, full, selectedOf('heroes'), 0),
+                      sideOptions(seasonId, full, selectedOf('heroes2'), 1),
+                  ]
+                : [sideOptions(seasonId, full, selectedOf('heroes'), undefined)],
+        ),
+    ]);
+
+    const byMap = new Map<string, { key: string; map: string; count: number; best: number }>();
+    for (const { _id, n } of mapCounts) {
+        const map = nameOf('map', _id);
+        const key = mapKey(map);
+        const entry = byMap.get(key) ?? { key, map, count: 0, best: -1 };
+        entry.count += n;
+        // show the id with the most matches (usually the current version of the map)
+        if (n > entry.best) Object.assign(entry, { map, best: n });
+        byMap.set(key, entry);
+    }
+
+    const data: FilterOptions = {
+        ...sides[0],
+        ...(sameSide && sides[1]
+            ? { sides: [sides[0], sides[1]] as [SideOptions, SideOptions] }
+            : {}),
+        maps: [...byMap.values()]
+            .map(({ key, map, count }) => ({ key, map, count }))
+            .sort((a, b) => a.key.localeCompare(b.key)),
+    };
+    if (optionsCache.size > 500) optionsCache.clear();
+    optionsCache.set(cacheKey, { data, expires: Date.now() + OPTIONS_TTL_MS });
+    return data;
+}
+
+// ---------------------------------------------------------------------------
+// Match list
+// ---------------------------------------------------------------------------
+
+const SORTS: Record<MatchSort, Record<string, 1 | -1>> = {
+    newest: { t: -1, _id: -1 },
+    oldest: { t: 1, _id: 1 },
+    longest: { d: -1, t: -1 },
+    shortest: { d: 1, t: -1 },
+    rounds: { _round: -1, t: -1 },
+};
+
+const EMPTY = { total: 0, items: [] as Awaited<ReturnType<typeof toApiMatch>>[] };
+
+export async function queryMatches(filter: MatchesFilter) {
+    const { seasonId } = filter;
+    await loadCodeBook();
+    const built = buildQuery(filter);
+    if (!built) return EMPTY;
+    const { match } = built;
+
+    const filtered = Object.keys(match).length > 0;
+    const pipeline: object[] = [];
+    if (filtered) pipeline.push({ $match: match });
+    if (filter.sort === 'rounds') pipeline.push({ $addFields: { _round: roundExpr } });
+    pipeline.push(
+        { $sort: SORTS[filter.sort] },
+        { $skip: filter.offset },
+        { $limit: filter.limit },
+    );
+
+    const started = Date.now();
+    const [docs, total] = await Promise.all([
+        collection(seasonId).aggregate<StoredMatchDoc>(pipeline, { allowDiskUse: true }).toArray(),
+        filtered
+            ? collection(seasonId).countDocuments(match)
+            : collection(seasonId).estimatedDocumentCount(),
+    ]);
+    const ms = Date.now() - started;
+    if (ms > 500) logger.warn(`Slow match query (${ms}ms): ${JSON.stringify(filter)}`);
+
+    return { total, items: await Promise.all(docs.map(toApiMatch)) };
+}
+
+// ---------------------------------------------------------------------------
+// Every player's recorded games in a season (leaderboard columns)
+// ---------------------------------------------------------------------------
+
+const recordsCache = new Map<
+    number,
+    { data: Record<string, [number, number, number]>; expires: number }
+>();
+
+/** userId → [wins, losses, draws] from the stored matches. Cached 5 minutes. */
+export async function getSeasonRecords(seasonId: number) {
+    const hit = recordsCache.get(seasonId);
+    if (hit && hit.expires > Date.now()) return hit.data;
+    await loadCodeBook();
+
+    const code = (name: string) => codeOf('result', name) ?? -1;
+    const [WIN, LOSE, DRAW] = [code('win'), code('lose'), code('draw')];
+    const is = (value: number) => ({ $cond: [{ $eq: ['$r', value] }, 1, 0] });
+
+    const rows = await collection(seasonId)
+        .aggregate<{ _id: number; w: number; l: number; d: number }>(
+            [
+                { $project: { a: 1, b: 1, r: { $mod: ['$d', 2 ** CODE_BITS.result] } } },
+                {
+                    $project: {
+                        s: [
+                            { p: '$a', w: is(WIN), l: is(LOSE), d: is(DRAW) },
+                            // the right player's result is the opposite of the left one
+                            { p: '$b', w: is(LOSE), l: is(WIN), d: is(DRAW) },
+                        ],
+                    },
+                },
+                { $unwind: '$s' },
+                {
+                    $group: {
+                        _id: '$s.p',
+                        w: { $sum: '$s.w' },
+                        l: { $sum: '$s.l' },
+                        d: { $sum: '$s.d' },
+                    },
+                },
+            ],
+            { allowDiskUse: true },
+        )
+        .toArray();
+
+    const data: Record<string, [number, number, number]> = {};
+    for (const row of rows) {
+        const player = playerOf(row._id);
+        if (player) data[player.u] = [row.w, row.l, row.d];
+    }
+    recordsCache.set(seasonId, { data, expires: Date.now() + 5 * 60_000 });
+    return data;
+}
+
+export async function countMatches(seasonId: number) {
+    return collection(seasonId).estimatedDocumentCount();
+}
+
+export async function findStoredIds(ids: string[], seasonId: number): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    const docs = await collection(seasonId)
+        .find({ _id: { $in: ids.map(packId) } }, { projection: { _id: 1 } })
+        .toArray();
+    return new Set(docs.map((doc) => unpackId(doc._id)));
+}
+
+export async function findStoredDates(
+    ids: string[],
+    seasonId: number,
+): Promise<Map<string, number>> {
+    if (ids.length === 0) return new Map();
+    const docs = await collection(seasonId)
+        .find({ _id: { $in: ids.map(packId) } }, { projection: { t: 1 } })
+        .toArray();
+    return new Map(docs.map((doc) => [unpackId(doc._id), doc.t]));
+}
+
+export async function hasStoredMatches(userId: string, seasonId: number): Promise<boolean> {
+    await loadCodeBook();
+    const code = playerCodeOf(userId);
+    if (code === undefined) return false;
+    const doc = await collection(seasonId).findOne(
+        { $or: [{ a: code }, { b: code }] },
+        { projection: { _id: 1 } },
+    );
+    return doc !== null;
+}
+
+export async function getMatchesOfPlayer(userId: string, seasonId: number) {
+    await loadCodeBook();
+    const code = playerCodeOf(userId);
+    if (code === undefined) return [];
+    const docs = await collection(seasonId)
+        .find({ $or: [{ a: code }, { b: code }] })
+        .sort({ t: -1 })
+        .toArray();
+    return Promise.all(docs.map(toApiMatch));
+}
+
+export async function getStoredMatch(id: string, seasonId: number) {
+    await loadCodeBook();
+    const doc = await collection(seasonId).findOne({ _id: packId(id) });
+    return doc ? toApiMatch(doc) : null;
+}
+
+export async function getAllStoredMatches(seasonId: number) {
+    await loadCodeBook();
+    const docs = await collection(seasonId).find({}).sort({ t: -1 }).toArray();
+    return Promise.all(docs.map(toApiMatch));
+}
+
+// ---------------------------------------------------------------------------
+// One player's season, from the stored matches (streaks: see the stored profile instead)
+// ---------------------------------------------------------------------------
+
+export async function getSeasonStats(userId: string, seasonId: number) {
+    await loadCodeBook();
+    const code = playerCodeOf(userId);
+    const docs =
+        code === undefined
+            ? []
+            : await collection(seasonId)
+                  .find(
+                      { $or: [{ a: code }, { b: code }] },
+                      { projection: { t: 1, a: 1, x: 1, y: 1, d: 1 } },
+                  )
+                  .sort({ t: 1 })
+                  .toArray();
+
+    let wins = 0;
+    let losses = 0;
+    let draws = 0;
+    let other = 0;
+    const heroes = new Map<string, { hero: string; played: number; wins: number }>();
+
+    for (const doc of docs) {
+        const left = doc.a === code;
+        const leftResult = nameOf('result', doc.d % 2 ** CODE_BITS.result);
+        const result = left ? leftResult : (opposingResult[leftResult] ?? leftResult);
+        const heroName = nameOf('hero', (left ? doc.x : doc.y) % 2 ** CODE_BITS.hero);
+        const hero = heroes.get(heroName) ?? { hero: heroName, played: 0, wins: 0 };
+
+        if (result === 'win') {
+            wins++;
+            hero.played++;
+            hero.wins++;
+        } else if (result === 'lose' || result === 'draw') {
+            if (result === 'lose') losses++;
+            else draws++;
+            hero.played++;
+        } else {
+            other++; // cancelled or lobby disconnect: not a played game
+        }
+        heroes.set(heroName, hero);
+    }
+
+    const minutes = (t?: number) => (t === undefined ? null : new Date(t * 60_000).toISOString());
+    return {
+        seasonId,
+        recorded: docs.length,
+        wins,
+        losses,
+        draws,
+        other,
+        heroes: await Promise.all(
+            [...heroes.values()]
+                .filter((h) => h.played > 0)
+                .sort((a, b) => b.played - a.played)
+                .slice(0, 3)
+                .map(async (h) => ({ ...h, portrait: await getAssetUrl('hero', h.hero) })),
+        ),
+        firstSeen: minutes(docs[0]?.t),
+        lastSeen: minutes(docs.at(-1)?.t),
+    };
+}
+
+/**
+ * A player's wins, draws and losses in every stored season, newest first (seasons without a
+ * played game are left out). Same games as the leaderboard columns (HoM vs HoM only);
+ * cancelled games and lobby disconnects aren't counted. Cached 5 minutes.
+ */
+export function getPlayerSeasonRecords(userId: string) {
+    return cached(`seasons:${userId}`, async () => {
+        await loadCodeBook();
+        const code = playerCodeOf(userId);
+        if (code === undefined) return [];
+        const seasonIds = await listMatchSeasons();
+        const rows = await Promise.all(
+            seasonIds.map(async (seasonId) => {
+                await ensureIndexes(seasonId);
+                const docs = await collection(seasonId)
+                    .find({ $or: [{ a: code }, { b: code }] }, { projection: { a: 1, d: 1 } })
+                    .toArray();
+                let wins = 0;
+                let losses = 0;
+                let draws = 0;
+                for (const doc of docs) {
+                    const leftResult = nameOf('result', doc.d % 2 ** CODE_BITS.result);
+                    const result =
+                        doc.a === code ? leftResult : (opposingResult[leftResult] ?? leftResult);
+                    if (result === 'win') wins++;
+                    else if (result === 'lose') losses++;
+                    else if (result === 'draw') draws++;
+                }
+                return { seasonId, wins, draws, losses };
+            }),
+        );
+        return rows
+            .filter((r) => r.wins + r.draws + r.losses > 0)
+            .sort((a, b) => b.seasonId - a.seasonId);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Head to head: a player against other players, only the games they played each other
+// ---------------------------------------------------------------------------
+
+/** wins, losses, draws, always from the profile player's side */
+export type Wld = [number, number, number];
+export type WldIndex = 0 | 1 | 2;
+
+/** A map key or a loadout key ("Quincy|Alchemist,Druid,Ninja"), with the record on it. */
+interface H2hPick {
+    key: string;
+    record: Wld;
+}
+
+interface H2hTally {
+    record: Wld;
+    maps: Map<string, Wld>;
+    /** the profile player's loadouts in these games */
+    mine: Map<string, Wld>;
+    /** the opponent's loadouts in these games */
+    theirs: Map<string, Wld>;
+    /** last game, minutes since epoch */
+    last: number;
+}
+
+export interface OpponentInput {
+    userId: string;
+    rank: number | null;
+    /** leaderboard name, used when the server never stored a match of the player */
+    name?: string | undefined;
+}
+
+/**
+ * Below this many games a map or loadout can't be a best or a worst.
+ * Head-to-head samples are small: 2 against one opponent, 3 over a group.
+ */
+export const H2H_MIN_GAMES = { opponent: 2, total: 3 } as const;
+
+export const RESULT_INDEX: Record<string, WldIndex> = { win: 0, lose: 1, draw: 2 };
+
+const newH2hTally = (): H2hTally => ({
+    record: [0, 0, 0],
+    maps: new Map(),
+    mine: new Map(),
+    theirs: new Map(),
+    last: 0,
+});
+
+function bump<K>(map: Map<K, Wld>, key: K, i: WldIndex) {
+    const record = map.get(key) ?? [0, 0, 0];
+    record[i]++;
+    map.set(key, record);
+}
+
+const gamesOf = (r: Wld) => r[0] + r[1] + r[2];
+const rateOf = (r: Wld) => (r[0] + r[1] > 0 ? r[0] / (r[0] + r[1]) : null);
+
+/** Best and worst win rate among the entries played at least `min` times. */
+function extremes(entries: Map<string, Wld>, min: number) {
+    const ok = [...entries].filter(([, r]) => gamesOf(r) >= min && rateOf(r) !== null);
+    if (ok.length === 0) return { best: null, worst: null };
+    const byRate = (dir: 1 | -1) => (p: [string, Wld], q: [string, Wld]) =>
+        dir * (rateOf(q[1])! - rateOf(p[1])!) || gamesOf(q[1]) - gamesOf(p[1]);
+    const [bestKey, bestRecord] = [...ok].sort(byRate(1))[0];
+    const [worstKey, worstRecord] = [...ok].sort(byRate(-1))[0];
+    const worse = rateOf(worstRecord)! < rateOf(bestRecord)!;
+    return {
+        best: { key: bestKey, record: bestRecord } as H2hPick,
+        // one entry, or all at the same rate: no worst
+        worst: worse ? ({ key: worstKey, record: worstRecord } as H2hPick) : null,
+    };
+}
+
+function mostPlayed(entries: Map<string, Wld>): H2hPick | null {
+    let top: H2hPick | null = null;
+    for (const [key, record] of entries) {
+        if (!top || gamesOf(record) > gamesOf(top.record)) top = { key, record };
+    }
+    return top;
+}
+
+/** Entries as a list, most played first. */
+const byGames = (entries: Map<string, Wld>, limit = Infinity): H2hPick[] =>
+    [...entries]
+        .map(([key, record]) => ({ key, record }))
+        .sort((a, b) => gamesOf(b.record) - gamesOf(a.record))
+        .slice(0, limit);
+
+function summarize(tally: H2hTally, min: number) {
+    const maps = extremes(tally.maps, min);
+    const mine = extremes(tally.mine, min);
+    const theirs = extremes(tally.theirs, min);
+    return {
+        record: tally.record,
+        lastMet: tally.last ? new Date(tally.last * 60_000).toISOString() : null,
+        maps: Object.fromEntries(tally.maps),
+        top: {
+            map: mostPlayed(tally.maps),
+            mine: mostPlayed(tally.mine),
+            theirs: mostPlayed(tally.theirs),
+        },
+        best: { map: maps.best, mine: mine.best, theirs: theirs.best },
+        worst: { map: maps.worst, mine: mine.worst, theirs: theirs.worst },
+    };
+}
+
+/** Map and loadout keys of a set of games, and the labels / images the client needs for them. */
+export function labeler() {
+    const known = knownHeroBases();
+    const bases = new Map<string, string>();
+    const mapNames = new Map<string, string>(); // key → a raw NK id
+    const heroVariants = new Map<string, string>(); // base → a raw NK id
+
+    const baseOf = (hero: string) => {
+        let base = bases.get(hero);
+        if (base === undefined) {
+            base = heroBase(hero, known);
+            bases.set(hero, base);
+        }
+        return base;
+    };
+
+    return {
+        map(d: number) {
+            const raw = nameOf('map', Math.floor(d / 2 ** D.map) % 2 ** CODE_BITS.map);
+            const key = mapKey(raw);
+            if (!mapNames.has(key)) mapNames.set(key, raw);
+            return key;
+        },
+        loadout(loadout: number) {
+            const { hero, towers } = unpackLoadout(loadout);
+            const base = baseOf(hero);
+            if (!heroVariants.has(base) || hero === base) heroVariants.set(base, hero);
+            return `${base}|${[...towers].sort().join(',')}`;
+        },
+        async labels() {
+            const maps: Record<string, { map: string; image: string | null }> = {};
+            for (const [key, map] of mapNames) {
+                maps[key] = { map, image: (await getAssetUrl('map', map)) ?? null };
+            }
+            const heroes: Record<string, { hero: string; portrait: string | null }> = {};
+            for (const [base, hero] of heroVariants) {
+                heroes[base] = {
+                    hero,
+                    portrait:
+                        (await getAssetUrl('hero', base)) ??
+                        (await getAssetUrl('hero', hero)) ??
+                        null,
+                };
+            }
+            return { maps, heroes };
+        },
+    };
+}
+
+/** Result of a stored game from the player's side, or undefined when it wasn't played. */
+function resultFor(doc: StoredMatchDoc, left: boolean): WldIndex | undefined {
+    const leftResult = nameOf('result', doc.d % 2 ** CODE_BITS.result);
+    return RESULT_INDEX[left ? leftResult : (opposingResult[leftResult] ?? leftResult)];
+}
+
+/** One tally for every game of a set (maps, both loadouts, last game). */
+function count(tally: H2hTally, i: WldIndex, map: string, mine: string, theirs: string, t: number) {
+    tally.record[i]++;
+    bump(tally.maps, map, i);
+    bump(tally.mine, mine, i);
+    bump(tally.theirs, theirs, i);
+    tally.last = Math.max(tally.last, t);
+}
+
+/** Games against any of `codes` in a season. */
+async function gamesAgainst(seasonId: number, me: number, codes: number[]) {
+    if (codes.length === 0) return [] as StoredMatchDoc[];
+    const projection = { t: 1, a: 1, b: 1, x: 1, y: 1, d: 1 };
+    // big groups (a whole leaderboard): all the player's games, filtered here
+    if (codes.length > 300) {
+        const wanted = new Set(codes);
+        const docs = await collection(seasonId)
+            .find({ $or: [{ a: me }, { b: me }] }, { projection })
+            .toArray();
+        return docs.filter((doc) => wanted.has(doc.a === me ? doc.b : doc.a));
+    }
+    return collection(seasonId)
+        .find(
+            {
+                $or: [
+                    { a: me, b: { $in: codes } },
+                    { b: me, a: { $in: codes } },
+                ],
+            },
+            { projection },
+        )
+        .toArray();
+}
+
+/** Seasons that have a matches collection, oldest first. Cached 10 minutes. */
+let storedSeasons: { ids: number[]; expires: number } | null = null;
+export async function listMatchSeasons(): Promise<number[]> {
+    if (storedSeasons && storedSeasons.expires > Date.now()) return storedSeasons.ids;
+    const db = mongoose.connection.db;
+    if (!db) return [];
+    const names = await db.listCollections({}, { nameOnly: true }).toArray();
+    const ids = names
+        .map((c) => /^matches_s(\d+)$/.exec(c.name)?.[1])
+        .filter((id): id is string => id !== undefined)
+        .map(Number)
+        .sort((a, b) => a - b);
+    storedSeasons = { ids, expires: Date.now() + 10 * 60_000 };
+    return ids;
+}
+
+/** Small 5-minute cache shared by the head-to-head reads. */
+const H2H_TTL_MS = 5 * 60_000;
+const h2hCache = new Map<string, { data: unknown; expires: number }>();
+async function cached<T>(key: string, compute: () => Promise<T>): Promise<T> {
+    const hit = h2hCache.get(key);
+    if (hit && hit.expires > Date.now()) return hit.data as T;
+    const data = await compute();
+    if (h2hCache.size > 300) h2hCache.clear();
+    h2hCache.set(key, { data, expires: Date.now() + H2H_TTL_MS });
+    return data;
+}
+
+const nameOfUser = (userId: string, fallback?: string) => {
+    const code = playerCodeOf(userId);
+    return (code !== undefined ? playerOf(code)?.n : undefined) ?? fallback ?? null;
+};
+
+// ---------- Profile card: 10 opponents, one row each ----------
+
+/**
+ * The profile player against each opponent. `seasonId` null = every stored season.
+ * One indexed query per season; cached 5 minutes.
+ */
+export function headToHead(seasonId: number | null, userId: string, opponents: OpponentInput[]) {
+    const key = `card:${seasonId ?? 'all'}:${userId}:${opponents.map((o) => o.userId).join(',')}`;
+    return cached(key, () => computeHeadToHead(seasonId, userId, opponents));
+}
+
+async function computeHeadToHead(
+    seasonId: number | null,
+    userId: string,
+    opponents: OpponentInput[],
+) {
+    await loadCodeBook();
+    const me = playerCodeOf(userId);
+    const tallies = new Map<number, H2hTally>();
+    for (const o of opponents) {
+        const code = playerCodeOf(o.userId);
+        if (code !== undefined && code !== me && !tallies.has(code))
+            tallies.set(code, newH2hTally());
+    }
+    const total = newH2hTally();
+    const codes = [...tallies.keys()];
+    const label = labeler();
+
+    const seasons = seasonId === null ? await listMatchSeasons() : [seasonId];
+    const docs =
+        me === undefined
+            ? []
+            : (await Promise.all(seasons.map((s) => gamesAgainst(s, me, codes)))).flat();
+
+    for (const doc of docs) {
+        const left = doc.a === me;
+        const tally = tallies.get(left ? doc.b : doc.a);
+        const i = resultFor(doc, left);
+        if (!tally || i === undefined) continue; // cancelled / lobby disconnect: not played
+        const map = label.map(doc.d);
+        const mine = label.loadout(left ? doc.x : doc.y);
+        const theirs = label.loadout(left ? doc.y : doc.x);
+        count(tally, i, map, mine, theirs, doc.t);
+        count(total, i, map, mine, theirs, doc.t);
+    }
+
+    return {
+        minGames: H2H_MIN_GAMES,
+        labels: await label.labels(),
+        name: me !== undefined ? (playerOf(me)?.n ?? null) : null,
+        alias: playerNames[userId] ?? null,
+        total: summarize(total, H2H_MIN_GAMES.total),
+        opponents: opponents.map((o) => {
+            const code = playerCodeOf(o.userId);
+            const tally = (code !== undefined && tallies.get(code)) || newH2hTally();
+            return {
+                userId: o.userId,
+                name: nameOfUser(o.userId, o.name),
+                alias: playerNames[o.userId] ?? null,
+                rank: o.rank,
+                ...summarize(tally, H2H_MIN_GAMES.opponent),
+            };
+        }),
+    };
+}
+
+// ---------- Compare page: one player, or a top N per season ----------
+
+/** How many of the latest games between two players come back with a one-player comparison. */
+const VERSUS_MATCHES = 30;
+/** Loadouts sent per side, most played first. */
+const VERSUS_LOADOUTS = 60;
+
+/**
+ * The player's games against the opponents of each season, counted only in that season
+ * (a top 25 of every season compares each season to its own top 25).
+ * `withMatches`: also the latest games themselves (one-player comparisons).
+ */
+export function versus(
+    userId: string,
+    seasons: VersusSeason[],
+    { withMatches = false, cacheKey }: { withMatches?: boolean; cacheKey: string },
+) {
+    return cached(`versus:${userId}:${cacheKey}`, () =>
+        computeVersus(userId, seasons, withMatches),
+    );
+}
+
+async function computeVersus(userId: string, seasons: VersusSeason[], withMatches: boolean) {
+    await loadCodeBook();
+    const me = playerCodeOf(userId);
+    const label = labeler();
+    const total = newH2hTally();
+
+    interface OpponentTally {
+        userId: string;
+        name: string | null;
+        bestRank: number | null;
+        /** seasons the player was part of the group */
+        seasons: number;
+        record: Wld;
+        last: number;
+    }
+    const opponents = new Map<string, OpponentTally>();
+    const perSeason: {
+        seasonId: number;
+        name: string;
+        bounds: VersusSeason['bounds'] | null;
+        group: number;
+        record: Wld;
+        last: number;
+    }[] = [];
+    const recent: StoredMatchDoc[] = [];
+
+    for (const season of seasons) {
+        const codeToUser = new Map<number, string>();
+        for (const o of season.opponents) {
+            if (o.userId === userId) continue;
+            const entry = opponents.get(o.userId) ?? {
+                userId: o.userId,
+                name: nameOfUser(o.userId, o.name),
+                bestRank: null,
+                seasons: 0,
+                record: [0, 0, 0] as Wld,
+                last: 0,
+            };
+            entry.seasons++;
+            if (o.rank !== null && (entry.bestRank === null || o.rank < entry.bestRank)) {
+                entry.bestRank = o.rank;
+            }
+            opponents.set(o.userId, entry);
+            const code = playerCodeOf(o.userId);
+            if (code !== undefined) codeToUser.set(code, o.userId);
+        }
+
+        const row = {
+            seasonId: season.seasonId,
+            name: season.name,
+            bounds: season.bounds ?? null,
+            group: codeToUser.size,
+            record: [0, 0, 0] as Wld,
+            last: 0,
+        };
+        perSeason.push(row);
+        if (me === undefined) continue;
+
+        const docs = await gamesAgainst(season.seasonId, me, [...codeToUser.keys()]);
+        for (const doc of docs) {
+            const left = doc.a === me;
+            const opponent = opponents.get(codeToUser.get(left ? doc.b : doc.a) ?? '');
+            const i = resultFor(doc, left);
+            if (!opponent || i === undefined) continue;
+            count(
+                total,
+                i,
+                label.map(doc.d),
+                label.loadout(left ? doc.x : doc.y),
+                label.loadout(left ? doc.y : doc.x),
+                doc.t,
+            );
+            opponent.record[i]++;
+            opponent.last = Math.max(opponent.last, doc.t);
+            row.record[i]++;
+            row.last = Math.max(row.last, doc.t);
+            if (withMatches) recent.push(doc);
+        }
+    }
+
+    const iso = (t: number) => (t ? new Date(t * 60_000).toISOString() : null);
+    const matches = withMatches
+        ? await Promise.all(
+              recent
+                  .sort((a, b) => b.t - a.t)
+                  .slice(0, VERSUS_MATCHES)
+                  .map(toApiMatch),
+          )
+        : null;
+
+    return {
+        name: me !== undefined ? (playerOf(me)?.n ?? null) : null,
+        alias: playerNames[userId] ?? null,
+        minGames: H2H_MIN_GAMES,
+        labels: await label.labels(),
+        total: {
+            ...summarize(total, H2H_MIN_GAMES.total),
+            mapList: byGames(total.maps),
+            mine: byGames(total.mine, VERSUS_LOADOUTS),
+            theirs: byGames(total.theirs, VERSUS_LOADOUTS),
+        },
+        /** everyone in the group; never-met players have a 0–0 record */
+        opponents: [...opponents.values()]
+            .map((o) => ({
+                userId: o.userId,
+                name: o.name,
+                alias: playerNames[o.userId] ?? null,
+                rank: o.bestRank,
+                seasons: o.seasons,
+                record: o.record,
+                lastMet: iso(o.last),
+            }))
+            .sort(
+                (a, b) =>
+                    gamesOf(b.record) - gamesOf(a.record) ||
+                    (a.rank ?? Infinity) - (b.rank ?? Infinity),
+            ),
+        seasons: perSeason.map(({ last, ...s }) => ({ ...s, lastMet: iso(last) })).reverse(),
+        matches,
+    };
+}
+
+/** Everyone the player met in these seasons, most games first (the "pick a player" list). */
+export function opponentsMet(userId: string, seasonIds: number[]) {
+    return cached(`met:${userId}:${seasonIds.join(',')}`, async () => {
+        await loadCodeBook();
+        const me = playerCodeOf(userId);
+        if (me === undefined) return [];
+        const records = new Map<number, Wld>();
+        for (const seasonId of seasonIds) {
+            const docs = await collection(seasonId)
+                .find({ $or: [{ a: me }, { b: me }] }, { projection: { a: 1, b: 1, d: 1 } })
+                .toArray();
+            for (const doc of docs) {
+                const left = doc.a === me;
+                const i = resultFor(doc, left);
+                if (i !== undefined) bump(records, left ? doc.b : doc.a, i);
+            }
+        }
+        return [...records]
+            .map(([code, record]) => {
+                const player = playerOf(code);
+                return {
+                    userId: player?.u ?? '',
+                    name: player?.n ?? null,
+                    alias: playerNames[player?.u ?? ''] ?? null,
+                    record,
+                };
+            })
+            .filter((o) => o.userId && o.userId !== userId)
+            .sort((a, b) => gamesOf(b.record) - gamesOf(a.record))
+            .slice(0, 500);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Storage report
+// ---------------------------------------------------------------------------
+
+export async function getStorageReport() {
+    const db = mongoose.connection.db;
+    if (!db) return null;
+    const mb = (bytes: number) => Math.round((bytes / 1024 / 1024) * 100) / 100;
+    try {
+        const stats = await db.stats();
+        const names = (await db.listCollections({}, { nameOnly: true }).toArray()).map(
+            (c) => c.name,
+        );
+        const matchCollections = await Promise.all(
+            names
+                .filter((n) => /^matches_s\d+$/.test(n))
+                .map(async (name) => ({
+                    name,
+                    matches: await db.collection(name).estimatedDocumentCount(),
+                })),
+        );
+        return {
+            dataMB: mb(stats.dataSize),
+            indexMB: mb(stats.indexSize),
+            storageMB: mb(stats.storageSize),
+            totalMB: mb(stats.dataSize + stats.indexSize),
+            limitMB: 512,
+            seasons: matchCollections.sort((a, b) => a.name.localeCompare(b.name)),
+        };
+    } catch (error) {
+        logger.error(`Storage report failed: ${error}`);
+        return null;
+    }
+}
