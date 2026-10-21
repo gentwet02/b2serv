@@ -22,6 +22,7 @@ export const playerNames: { [key: string]: string } = {
     '9fbd418ad9c7afa51a17de1d5b25e17198511db49a18d830': 'Chippie',
     '9cee118cd6c2fca04d4a8c195e71e621cd061ebf9a46df6e': 'Cologne',
     '9fb9158fd9c0f0a31a4a8e4d5c70e523cd521dbf96178e6c': 'Crisis',
+    '9fee44ddddc3ffa54e40881f0a73e3719a0c1ae8cf45896a': 'Crisis_boosting_account',
     '9fba45828a91faa41b11da1e0b77e024980549bdcd468e38': 'LB',
     '9fbe158289c4aaac19408e1e5c21e321cf0d48beca188b3f': 'Dickson Cider',
     '9cba11dfd7c2ffa44b108a1e0a27b776cc0c1fe99911da3c': 'Dogdayboy',
