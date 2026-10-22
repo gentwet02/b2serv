@@ -6,6 +6,7 @@ import {
     ensureCodes,
     ensurePlayers,
     findPlayerCodes,
+    matchedOldName,
     loadCodeBook,
     nameOf,
     namesOf,
@@ -250,7 +251,10 @@ export async function saveCrawledMatches(
 // Reading back to NK's shape
 // ---------------------------------------------------------------------------
 
-async function side(playerCode: number, loadout: number, result: string) {
+/** Search terms of a query, to tell which older name a player was found by. */
+type NameTerms = (string | undefined)[];
+
+async function side(playerCode: number, loadout: number, result: string, terms: NameTerms = []) {
     const player = playerOf(playerCode);
     const { hero, towers } = unpackLoadout(loadout);
     const userId = player?.u ?? '';
@@ -264,11 +268,21 @@ async function side(playerCode: number, loadout: number, result: string) {
         towerthree: towers[2],
         result,
         profileURL: `https://data.ninjakiwi.com/battles2/users/${userId}`,
+        ...oldNameOf(playerCode, terms),
     };
 }
 
+/** { matchedName } when the search found this player by a name they no longer use */
+function oldNameOf(playerCode: number, terms: NameTerms) {
+    for (const term of terms) {
+        const name = term ? matchedOldName(playerCode, term) : undefined;
+        if (name) return { matchedName: name };
+    }
+    return {};
+}
+
 /** NK's match shape, plus seenAt and real names, for the client. */
-export async function toApiMatch(doc: StoredMatchDoc) {
+export async function toApiMatch(doc: StoredMatchDoc, terms: NameTerms = []) {
     const info = unpackInfo(doc.d);
     return {
         id: unpackId(doc._id),
@@ -277,8 +291,8 @@ export async function toApiMatch(doc: StoredMatchDoc) {
         mapURL: await getAssetUrl('map', info.map),
         endRound: info.endRound,
         duration: info.duration,
-        playerLeft: await side(doc.a, doc.x, info.result),
-        playerRight: await side(doc.b, doc.y, opposingResult[info.result] ?? info.result),
+        playerLeft: await side(doc.a, doc.x, info.result, terms),
+        playerRight: await side(doc.b, doc.y, opposingResult[info.result] ?? info.result, terms),
         seenAt: new Date(doc.t * 60_000).toISOString(),
     };
 }
@@ -310,14 +324,14 @@ const heroCodesFor = (pick: HeroPick) => {
 };
 
 /** Player codes for a name part and/or an exact id. null: no player filter, []: nobody. */
-function resolvePlayers(name?: string, id?: string): number[] | null {
+function resolvePlayers(name?: string, id?: string, allNames = false): number[] | null {
     let codes: number[] | null = null;
     if (id) {
         const code = playerCodeOf(id);
         codes = code === undefined ? [] : [code];
     }
     if (name) {
-        const found = findPlayerCodes(name);
+        const found = findPlayerCodes(name, { allNames });
         codes = codes ? codes.filter((c) => found.includes(c)) : found;
     }
     return codes;
@@ -369,8 +383,8 @@ function buildQuery(filter: FacetFilter): BuiltQuery | null {
         if (mapCodes.length === 0) return null;
     }
 
-    const playerCodes = resolvePlayers(filter.player, filter.playerId);
-    const playerCodes2 = sameSide ? resolvePlayers(filter.player2) : null;
+    const playerCodes = resolvePlayers(filter.player, filter.playerId, filter.allNames);
+    const playerCodes2 = sameSide ? resolvePlayers(filter.player2, undefined, filter.allNames) : null;
     if (playerCodes?.length === 0 || playerCodes2?.length === 0) return null;
 
     // indexed part: players
@@ -671,7 +685,8 @@ export async function queryMatches(filter: MatchesFilter) {
     const ms = Date.now() - started;
     if (ms > 500) logger.warn(`Slow match query (${ms}ms): ${JSON.stringify(filter)}`);
 
-    return { total, items: await Promise.all(docs.map(toApiMatch)) };
+    const terms = filter.allNames ? [filter.player, filter.player2] : [];
+    return { total, items: await Promise.all(docs.map((doc) => toApiMatch(doc, terms))) };
 }
 
 // ---------------------------------------------------------------------------
@@ -771,7 +786,7 @@ export async function getMatchesOfPlayer(userId: string, seasonId: number) {
         .find({ $or: [{ a: code }, { b: code }] })
         .sort({ t: -1 })
         .toArray();
-    return Promise.all(docs.map(toApiMatch));
+    return Promise.all(docs.map((doc) => toApiMatch(doc)));
 }
 
 export async function getStoredMatch(id: string, seasonId: number) {
@@ -783,7 +798,7 @@ export async function getStoredMatch(id: string, seasonId: number) {
 export async function getAllStoredMatches(seasonId: number) {
     await loadCodeBook();
     const docs = await collection(seasonId).find({}).sort({ t: -1 }).toArray();
-    return Promise.all(docs.map(toApiMatch));
+    return Promise.all(docs.map((doc) => toApiMatch(doc)));
 }
 
 // ---------------------------------------------------------------------------
@@ -1298,7 +1313,7 @@ async function computeVersus(userId: string, seasons: VersusSeason[], withMatche
               recent
                   .sort((a, b) => b.t - a.t)
                   .slice(0, VERSUS_MATCHES)
-                  .map(toApiMatch),
+                  .map((doc) => toApiMatch(doc)),
           )
         : null;
 

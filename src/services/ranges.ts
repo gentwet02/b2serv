@@ -13,14 +13,41 @@ export function rangeCount(range: VersusRange, size: number) {
 }
 
 /**
- * Ranks a range covers in one season. `band`: only the ranks below the next smaller
- * threshold (top 25 → 11–25; top 25% of 1200 players → 101–300).
+ * What a range leaves out at the top: a smaller range (top 50 without the top 10 → 11–50),
+ * 'previous' for the next smaller threshold (the old ?band=1), or nothing.
  */
-export function rangeBounds(range: VersusRange, band: boolean, size: number) {
+export type RangeExclude = VersusRange | 'previous' | null;
+
+/** ?exclude=t10 (a range listed before `range`), or the old ?band=1. */
+export function parseExclude(
+    range: VersusRange,
+    exclude: string | undefined,
+    band: string | undefined,
+): RangeExclude {
+    const index = (VERSUS_RANGES as readonly string[]).indexOf(exclude ?? '');
+    if (index >= 0 && index < VERSUS_RANGES.indexOf(range)) return VERSUS_RANGES[index]!;
+    return band === '1' ? 'previous' : null;
+}
+
+/** The range an exclude names, for the response ('previous': the one listed before). */
+export function excludedRange(range: VersusRange, exclude: RangeExclude): VersusRange | null {
+    if (exclude !== 'previous') return exclude;
+    return VERSUS_RANGES[VERSUS_RANGES.indexOf(range) - 1] ?? null;
+}
+
+/**
+ * Ranks a range covers in one season, without the ones `exclude` covers: top 50 without
+ * the top 10 → 11–50. 'previous': below the next smaller threshold (top 25% of 1200
+ * players → 101–300). Empty (from > to) when the excluded part is the bigger one that season.
+ */
+export function rangeBounds(range: VersusRange, exclude: RangeExclude, size: number) {
     const to = rangeCount(range, size);
-    if (!band) return { from: 1, to, size };
-    const below = VERSUS_RANGES.map((r) => rangeCount(r, size)).filter((n) => n < to);
-    return { from: (below.length ? Math.max(...below) : 0) + 1, to, size };
+    if (!exclude) return { from: 1, to, size };
+    if (exclude === 'previous') {
+        const below = VERSUS_RANGES.map((r) => rangeCount(r, size)).filter((n) => n < to);
+        return { from: (below.length ? Math.max(...below) : 0) + 1, to, size };
+    }
+    return { from: Math.min(rangeCount(exclude, size), to) + 1, to, size };
 }
 
 /** ?season=46 | all → the seasons asked for, newest last; null when unknown. */

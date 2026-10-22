@@ -71,6 +71,7 @@ function parseFilter(c: Context, seasonId: number): FacetFilter {
                 ?.replace(/[^a-z0-9:]/g, '')
                 .slice(0, 60) || undefined,
         sameSide: c.req.query('sameSide') === '1',
+        allNames: c.req.query('allNames') === '1',
         player2: c.req.query('player2')?.trim().slice(0, 64) || undefined,
         heroes2: parseHeroes(c.req.query('heroes2')).slice(0, 1),
         towers2: list(c.req.query('towers2'), 3),
@@ -82,6 +83,7 @@ function parseFilter(c: Context, seasonId: number): FacetFilter {
  *   ?season=46                     default: live season
  *   &sort=newest                   newest | oldest | longest | shortest | rounds
  *   &player=ign|alias                  part of an in-game or real name
+ *   &allNames=1                    player / player2 also match older in-game names
  *   &playerId=<id>                 one player's matches (profiles)
  *   &heroes=Quincy,Adora:Adora_Fateweaver   up to 2; "Base" = any variant
  *   &towers=Druid,DartMonkey       up to 6, all of them in the match

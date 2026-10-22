@@ -22,7 +22,14 @@ import { logger } from '@/utils/logger';
 import { fixAssetUrl, fixProfileAssets } from '@/utils/assets';
 import { extractUserId } from '@/utils/helpers';
 import { VersusSeason } from '@/types/season';
-import { rangeBounds, resolveSeasons, VERSUS_RANGES, type VersusRange } from '@/services/ranges';
+import {
+    excludedRange,
+    parseExclude,
+    rangeBounds,
+    resolveSeasons,
+    VERSUS_RANGES,
+    type VersusRange,
+} from '@/services/ranges';
 
 /**
  * Player data for the client, from the database (background jobs keep it up to date).
@@ -224,7 +231,8 @@ users.get('/:id/compare', async (c) => {
  *   &vs=<id>              one opponent, with the latest games between them
  *   &range=t10|t25|t50|t100|t25p|t50p|t75p|all
  *                         or: a range of each season's leaderboard, counted in that season
- *   &band=1               only the ranks between the previous threshold and this one
+ *   &exclude=t10          leave out a smaller range: the top 50 without the top 10
+ *   &band=1               (old) leave out the previous threshold
  */
 users.get('/:id/versus', async (c) => {
     const id = c.req.param('id');
@@ -245,7 +253,7 @@ users.get('/:id/versus', async (c) => {
     const range: VersusRange = (VERSUS_RANGES as readonly string[]).includes(rangeParam)
         ? (rangeParam as VersusRange)
         : 't10';
-    const band = c.req.query('band') === '1';
+    const exclude = vs ? null : parseExclude(range, c.req.query('exclude'), c.req.query('band'));
 
     try {
         // one season: make sure its leaderboard is loaded (ranks, ranges)
@@ -268,7 +276,7 @@ users.get('/:id/versus', async (c) => {
                 missing.push(season.seasonId);
                 return { seasonId: season.seasonId, name: season.name, opponents: [] };
             }
-            const bounds = rangeBounds(range, band, size);
+            const bounds = rangeBounds(range, exclude, size);
             return {
                 seasonId: season.seasonId,
                 name: season.name,
@@ -279,7 +287,7 @@ users.get('/:id/versus', async (c) => {
 
         const data = await versus(id, groups, {
             withMatches: !!vs,
-            cacheKey: `${seasonParam ?? 'live'}:${vs ?? `${range}${band ? ':band' : ''}`}`,
+            cacheKey: `${seasonParam ?? 'live'}:${vs ?? `${range}${exclude ? `-${exclude}` : ''}`}`,
         });
         c.header('Cache-Control', 'public, max-age=60');
         return c.json({
@@ -290,7 +298,9 @@ users.get('/:id/versus', async (c) => {
             mode: vs ? 'player' : 'top',
             vs: vs ?? null,
             range: vs ? null : range,
-            band: !vs && band,
+            /** the range left out at the top */
+            exclude: excludedRange(range, exclude),
+            band: !!exclude,
             /** seasons whose leaderboard the server doesn't have yet (range mode) */
             missingSeasons: missing,
         });

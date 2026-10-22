@@ -319,7 +319,14 @@ export const namesOf = (kind: CodeKind) => [...byName[kind].keys()];
 export const playerCodeOf = (userId: string) => playerByUser.get(userId);
 export const playerOf = (code: number) => playerByCode.get(code);
 
-export function findPlayerCodes(term: string): number[] {
+const nameHit = (needle: string) => (name: string | undefined) =>
+    !!name && name.toLowerCase().includes(needle);
+
+/**
+ * Players whose id, current name or alias contains `term`.
+ * allNames: also the names they went by before (player_codes `o`).
+ */
+export function findPlayerCodes(term: string, { allNames = false } = {}): number[] {
     const raw = term.trim();
     const needle = raw.toLowerCase();
     if (!needle) return [];
@@ -328,9 +335,23 @@ export function findPlayerCodes(term: string): number[] {
     const byId = playerByUser.get(raw) ?? playerByUser.get(needle);
     if (byId !== undefined) codes.add(byId);
 
-    const hit = (name: string | undefined) => !!name && name.toLowerCase().includes(needle);
+    const hit = nameHit(needle);
     for (const [code, { u, n, o }] of playerByCode) {
-        if (hit(n) || hit(playerNames[u]) || o?.some(hit)) codes.add(code);
+        if (hit(n) || hit(playerNames[u]) || (allNames && o?.some(hit))) codes.add(code);
     }
     return [...codes];
+}
+
+/**
+ * The older name of a player that `term` found, when it found them only through it
+ * (not by id, current name or alias). undefined otherwise.
+ */
+export function matchedOldName(code: number, term: string): string | undefined {
+    const player = playerByCode.get(code);
+    const needle = term.trim().toLowerCase();
+    if (!player || !needle) return undefined;
+    const hit = nameHit(needle);
+    if (player.u === term.trim() || player.u === needle) return undefined;
+    if (hit(player.n) || hit(playerNames[player.u])) return undefined;
+    return player.o?.find(hit);
 }

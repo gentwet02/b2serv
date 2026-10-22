@@ -1,7 +1,14 @@
 import { Hono } from 'hono';
 import { loadCodeBook, playerCodeOf, playerOf } from '@/services/codeBook';
 import { getLeaderboardSize, getRankRange, readLeaderboard } from '@/services/leaderboard';
-import { rangeBounds, resolveSeasons, VERSUS_RANGES, type VersusRange } from '@/services/ranges';
+import {
+    excludedRange,
+    parseExclude,
+    rangeBounds,
+    resolveSeasons,
+    VERSUS_RANGES,
+    type VersusRange,
+} from '@/services/ranges';
 import { getSeasonById } from '@/services/seasons';
 import { computeStats, type StatsSeasonGroup } from '@/services/stats';
 import { playerNames } from '@/data/playerNames';
@@ -25,7 +32,8 @@ const responses = new Map<string, { data: unknown; expires: number }>();
  *   &player=<id>           one player's games
  *   &players=t10|t25|t50|t100|t25p|t50p|t75p|all
  *                          or a range of each season's leaderboard (default t25);
- *   &band=1                only the ranks between the previous threshold and this one
+ *   &exclude=t10           leave out a smaller range: the top 50 without the top 10
+ *   &band=1                (old) leave out the previous threshold
  *   &map=oasis             a map key, both versions; oasis:classic | oasis:reversed for one
  *   &hero=Quincy           a hero base
  *   &towers=Druid,Ninja    up to 3, all in the loadout
@@ -44,7 +52,9 @@ stats.get('/', async (c) => {
     const scope: PlayerScope = (PLAYER_SCOPES as readonly string[]).includes(scopeParam)
         ? (scopeParam as PlayerScope)
         : 't25';
-    const band = !userId && c.req.query('band') === '1';
+    const exclude = userId
+        ? null
+        : parseExclude(scope as VersusRange, c.req.query('exclude'), c.req.query('band'));
     // "oasis" (classic and reversed), "oasis:classic" or "oasis:reversed"
     const map = parseMapFilter(c.req.query('map'));
     // "Quincy" (any variant) or "Quincy:Quincy_Cyber", like /matches-history
@@ -67,7 +77,7 @@ stats.get('/', async (c) => {
     const cacheKey = JSON.stringify([
         seasonParam ?? 'live',
         userId ?? scope,
-        band,
+        exclude,
         map,
         hero,
         towers,
@@ -104,11 +114,12 @@ stats.get('/', async (c) => {
                 missing.push(season.seasonId);
                 return { ...base, codes: [], groupKey: 'none' };
             }
-            const bounds = rangeBounds(scope as VersusRange, band, size);
+            const bounds = rangeBounds(scope as VersusRange, exclude, size);
             const codes = (getRankRange(season.seasonId, bounds.from, bounds.to) ?? [])
                 .map((p) => playerCodeOf(p.userId))
                 .filter((code): code is number => code !== undefined);
-            return { ...base, bounds, codes, groupKey: `${scope}${band ? ':band' : ''}:${size}` };
+            const groupKey = `${scope}${exclude ? `-${exclude}` : ''}:${size}`;
+            return { ...base, bounds, codes, groupKey };
         });
 
         const data = await computeStats({ seasons: groups, map, hero, towers });
@@ -118,7 +129,9 @@ stats.get('/', async (c) => {
             seasonName: seasonParam === 'all' ? 'All seasons' : seasons[0]!.name,
             mode: userId ? 'player' : 'top',
             players: userId ? null : scope,
-            band,
+            /** the range left out at the top */
+            exclude: excludedRange(scope as VersusRange, exclude),
+            band: !!exclude,
             player: userId
                 ? {
                       userId,

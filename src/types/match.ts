@@ -68,6 +68,7 @@ export interface MatchesFilter {
     sort: MatchSort;
     player?: string; // part of a name (in-game or real)
     playerId?: string; // exact user id
+    allNames: boolean; // player / player2 also match the names players had before
     heroes: HeroPick[]; // up to 2
     towers: string[]; // up to 6
     map?: string; // map key
