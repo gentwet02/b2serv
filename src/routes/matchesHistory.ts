@@ -7,6 +7,7 @@ import {
     countMatches,
     getFilterOptions,
     getStorageReport,
+    listMatchSeasons,
     queryMatches,
 } from '@/services/matchStore';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
@@ -53,11 +54,15 @@ const crawlInfo = () => ({
     lastRunEndedAt: crawlState.lastRunEndedAt?.toISOString() ?? null,
 });
 
+/** `season=all`: every stored season. */
+const ALL = { seasonId: null, live: true } as const;
+
 function resolveSeason(param: string | undefined) {
+    if (param === 'all') return ALL;
     return param ? getSeasonById(Number(param)) : getLiveSeason();
 }
 
-function parseFilter(c: Context, seasonId: number): FacetFilter {
+function parseFilter(c: Context, seasonId: number | null): FacetFilter {
     const playerId = c.req.query('playerId');
     return {
         seasonId,
@@ -80,7 +85,9 @@ function parseFilter(c: Context, seasonId: number): FacetFilter {
 
 /**
  * GET /matches-history
- *   ?season=46                     default: live season
+ *   ?season=46                     default: live season; "all" = every stored season
+ *                                  (each match then says its seasonId, and
+ *                                  firstSeasonId is the oldest season recorded)
  *   &sort=newest                   newest | oldest | longest | shortest | rounds
  *   &player=ign|alias                  part of an in-game or real name
  *   &allNames=1                    player / player2 also match older in-game names
@@ -113,13 +120,16 @@ matchesHistory.get('/', async (c) => {
     };
 
     try {
-        const [{ total, items }, totalMatches] = await Promise.all([
+        const [{ total, items }, totalMatches, stored] = await Promise.all([
             queryMatches(filter),
             countMatches(season.seasonId),
+            season.seasonId === null ? listMatchSeasons() : null,
         ]);
         return c.json({
             matches: {
                 seasonId: season.seasonId,
+                // every season: the oldest one with recorded matches
+                ...(stored ? { firstSeasonId: stored[0] ?? null } : {}),
                 totalMatches,
                 total,
                 offset: filter.offset,

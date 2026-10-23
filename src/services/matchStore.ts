@@ -281,11 +281,13 @@ function oldNameOf(playerCode: number, terms: NameTerms) {
     return {};
 }
 
-/** NK's match shape, plus seenAt and real names, for the client. */
-export async function toApiMatch(doc: StoredMatchDoc, terms: NameTerms = []) {
+/** NK's match shape, plus seenAt, real names and (when known) the season, for the client. */
+export async function toApiMatch(doc: StoredMatchDoc, terms: NameTerms = [], seasonId?: number) {
     const info = unpackInfo(doc.d);
+    const season = doc.s ?? seasonId;
     return {
         id: unpackId(doc._id),
+        ...(season !== undefined ? { seasonId: season } : {}),
         gametype: 'Ranked',
         map: info.map,
         mapURL: await getAssetUrl('map', info.map),
@@ -465,12 +467,17 @@ type Slot = 0 | 1 | undefined;
 const OPTIONS_TTL_MS = 60_000;
 const optionsCache = new Map<string, { data: FilterOptions; expires: number }>();
 
+/** The seasons a filter reads: one, or every stored season (seasonId null). */
+const seasonsOf = async (seasonId: number | null) =>
+    seasonId === null ? listMatchSeasons() : [seasonId];
+
+/** Counts per value, added up over the seasons (counts of separate seasons simply add). */
 async function countBy(
-    seasonId: number,
+    seasonIds: number[],
     built: BuiltQuery | null,
     project: object,
 ): Promise<Count[]> {
-    if (!built) return [];
+    if (!built || seasonIds.length === 0) return [];
     const pipeline: object[] = [];
     if (Object.keys(built.match).length) pipeline.push({ $match: built.match });
     pipeline.push(
@@ -478,7 +485,17 @@ async function countBy(
         { $unwind: '$v' },
         { $group: { _id: '$v', n: { $sum: 1 } } },
     );
-    return collection(seasonId).aggregate<Count>(pipeline, { allowDiskUse: true }).toArray();
+    const perSeason = await Promise.all(
+        seasonIds.map((id) =>
+            collection(id).aggregate<Count>(pipeline, { allowDiskUse: true }).toArray(),
+        ),
+    );
+    if (perSeason.length === 1) return perSeason[0]!;
+    const totals = new Map<number, number>();
+    for (const rows of perSeason) {
+        for (const { _id, n } of rows) totals.set(_id, (totals.get(_id) ?? 0) + n);
+    }
+    return [...totals].map(([_id, n]) => ({ _id, n }));
 }
 
 /** Values (each counted once per match) of both players, or only of one side's player. */
@@ -509,18 +526,18 @@ interface SelectedHero {
 
 /** Heroes and towers of one side (or both), counted within the other filters. */
 async function sideOptions(
-    seasonId: number,
+    seasonIds: number[],
     full: BuiltQuery | null,
     selected: SelectedHero[],
     slot: Slot,
 ): Promise<SideOptions> {
     const known = knownHeroBases();
     const [heroCounts, towerCounts, ...relaxedHeroCounts] = await Promise.all([
-        full ? countBy(seasonId, full, heroesProjection(full, slot)) : Promise.resolve([]),
-        full ? countBy(seasonId, full, towersProjection(full, slot)) : Promise.resolve([]),
+        full ? countBy(seasonIds, full, heroesProjection(full, slot)) : Promise.resolve([]),
+        full ? countBy(seasonIds, full, towersProjection(full, slot)) : Promise.resolve([]),
         ...selected.map(({ pick, relaxed }) =>
             pick.hero && relaxed
-                ? countBy(seasonId, relaxed, heroesProjection(relaxed, slot))
+                ? countBy(seasonIds, relaxed, heroesProjection(relaxed, slot))
                 : Promise.resolve(null),
         ),
     ]);
@@ -568,7 +585,7 @@ export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptio
     const hit = optionsCache.get(cacheKey);
     if (hit && hit.expires > Date.now()) return hit.data;
     await loadCodeBook();
-    const { seasonId } = filter;
+    const seasonIds = await seasonsOf(filter.seasonId);
     const sameSide = filter.sameSide && canUseSameSide(filter);
 
     const full = buildQuery(filter);
@@ -587,14 +604,14 @@ export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptio
         });
 
     const [mapCounts, sides] = await Promise.all([
-        countBy(seasonId, withoutMap, [mapExpr]),
+        countBy(seasonIds, withoutMap, [mapExpr]),
         Promise.all(
             sameSide
                 ? [
-                      sideOptions(seasonId, full, selectedOf('heroes'), 0),
-                      sideOptions(seasonId, full, selectedOf('heroes2'), 1),
+                      sideOptions(seasonIds, full, selectedOf('heroes'), 0),
+                      sideOptions(seasonIds, full, selectedOf('heroes2'), 1),
                   ]
-                : [sideOptions(seasonId, full, selectedOf('heroes'), undefined)],
+                : [sideOptions(seasonIds, full, selectedOf('heroes'), undefined)],
         ),
     ]);
 
@@ -658,35 +675,62 @@ const SORTS: Record<MatchSort, Record<string, 1 | -1>> = {
 
 const EMPTY = { total: 0, items: [] as Awaited<ReturnType<typeof toApiMatch>>[] };
 
+/**
+ * One page of matches. Every season: each season's collection is filtered, sorted and cut to
+ * the first offset + limit matches on its own (indexed), the seasons are merged with
+ * $unionWith, then sorted and paged once more. Each match carries the season it came from.
+ */
 export async function queryMatches(filter: MatchesFilter) {
-    const { seasonId } = filter;
     await loadCodeBook();
+    const seasonIds = await seasonsOf(filter.seasonId);
     const built = buildQuery(filter);
-    if (!built) return EMPTY;
+    if (!built || seasonIds.length === 0) return EMPTY;
     const { match } = built;
 
     const filtered = Object.keys(match).length > 0;
-    const pipeline: object[] = [];
-    if (filtered) pipeline.push({ $match: match });
-    if (filter.sort === 'rounds') pipeline.push({ $addFields: { _round: roundExpr } });
-    pipeline.push(
-        { $sort: SORTS[filter.sort] },
-        { $skip: filter.offset },
-        { $limit: filter.limit },
-    );
+    const sort = { $sort: SORTS[filter.sort] };
+    const pre: object[] = [];
+    if (filtered) pre.push({ $match: match });
+    if (filter.sort === 'rounds') pre.push({ $addFields: { _round: roundExpr } });
+
+    const branch = (seasonId: number) => [
+        ...pre,
+        sort,
+        { $limit: filter.offset + filter.limit },
+        { $addFields: { s: seasonId } },
+    ];
+    const [first, ...others] = seasonIds;
+    const pipeline: object[] =
+        others.length === 0
+            ? [...pre, sort, { $skip: filter.offset }, { $limit: filter.limit }]
+            : [
+                  ...branch(first!),
+                  ...others.map((id) => ({
+                      $unionWith: { coll: collectionName(id), pipeline: branch(id) },
+                  })),
+                  sort,
+                  { $skip: filter.offset },
+                  { $limit: filter.limit },
+              ];
+
+    const count = (id: number) =>
+        filtered
+            ? collection(id).countDocuments(match)
+            : collection(id).estimatedDocumentCount();
 
     const started = Date.now();
-    const [docs, total] = await Promise.all([
-        collection(seasonId).aggregate<StoredMatchDoc>(pipeline, { allowDiskUse: true }).toArray(),
-        filtered
-            ? collection(seasonId).countDocuments(match)
-            : collection(seasonId).estimatedDocumentCount(),
+    const [docs, counts] = await Promise.all([
+        collection(first!).aggregate<StoredMatchDoc>(pipeline, { allowDiskUse: true }).toArray(),
+        Promise.all(seasonIds.map(count)),
     ]);
     const ms = Date.now() - started;
     if (ms > 500) logger.warn(`Slow match query (${ms}ms): ${JSON.stringify(filter)}`);
 
     const terms = filter.allNames ? [filter.player, filter.player2] : [];
-    return { total, items: await Promise.all(docs.map((doc) => toApiMatch(doc, terms))) };
+    return {
+        total: counts.reduce((a, b) => a + b, 0),
+        items: await Promise.all(docs.map((doc) => toApiMatch(doc, terms, first))),
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -744,8 +788,12 @@ export async function getSeasonRecords(seasonId: number) {
     return data;
 }
 
-export async function countMatches(seasonId: number) {
-    return collection(seasonId).estimatedDocumentCount();
+/** Matches stored for a season, or for every season (null). */
+export async function countMatches(seasonId: number | null) {
+    const counts = await Promise.all(
+        (await seasonsOf(seasonId)).map((id) => collection(id).estimatedDocumentCount()),
+    );
+    return counts.reduce((a, b) => a + b, 0);
 }
 
 export async function findStoredIds(ids: string[], seasonId: number): Promise<Set<string>> {

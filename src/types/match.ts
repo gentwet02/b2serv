@@ -53,6 +53,8 @@ export interface StoredMatchDoc {
     x: number;
     y: number;
     d: number;
+    /** all-seasons queries: the season the match was read from */
+    s?: number;
 }
 
 /** A hero filter: any variant of `base`, or exactly `hero`. */
@@ -62,7 +64,8 @@ export interface HeroPick {
 }
 
 export interface MatchesFilter {
-    seasonId: number;
+    /** null: every stored season */
+    seasonId: number | null;
     offset: number;
     limit: number;
     sort: MatchSort;
