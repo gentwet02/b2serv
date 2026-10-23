@@ -325,6 +325,27 @@ const heroCodesFor = (pick: HeroPick) => {
     return names.map((n) => codeOf('hero', n)).filter((c): c is number => c !== undefined);
 };
 
+const isCode = (code: number | undefined): code is number => code !== undefined;
+
+/** Hero codes of exclusions, every variant of a base; unknown heroes exclude nothing. */
+const exHeroCodes = (picks: HeroPick[]) => [...new Set(picks.flatMap(heroCodesFor))];
+const exTowerCodes = (towers: string[]) => towers.map((t) => codeOf('tower', t)).filter(isCode);
+
+/** Raw map codes fitting "oasis" (both versions), "oasis:classic" or "oasis:reversed". */
+function mapCodesFor(value: string) {
+    const wanted = parseMapFilter(value);
+    if (!wanted) return [];
+    return namesOf('map')
+        .filter((m) => mapFits(m, wanted))
+        .map((m) => codeOf('map', m))
+        .filter(isCode);
+}
+
+/** None of `codes` is among `values` (unpacked heroes or towers). */
+const noneOf = (codes: number[], values: object[]) => ({
+    $eq: [{ $size: { $setIntersection: [codes, values] } }, 0],
+});
+
 /** Player codes for a name part and/or an exact id. null: no player filter, []: nobody. */
 function resolvePlayers(name?: string, id?: string, allNames = false): number[] | null {
     let codes: number[] | null = null;
@@ -344,6 +365,8 @@ interface SideSpec {
     players: number[] | null;
     heroes: number[] | null;
     towers: number[];
+    exHeroes: number[];
+    exTowers: number[];
 }
 
 /** The conditions a side's filters put on one player and loadout. */
@@ -352,6 +375,8 @@ function sideConditions(spec: SideSpec, { player, loadout }: (typeof SIDES)[keyo
     if (spec.players) all.push({ $in: [player, spec.players] });
     if (spec.heroes) all.push({ $in: [heroExpr(loadout), spec.heroes] });
     if (spec.towers.length) all.push({ $setIsSubset: [spec.towers, towersExpr(loadout)] });
+    if (spec.exHeroes.length) all.push(noneOf(spec.exHeroes, [heroExpr(loadout)]));
+    if (spec.exTowers.length) all.push(noneOf(spec.exTowers, towersExpr(loadout)));
     return all;
 }
 
@@ -375,15 +400,12 @@ function buildQuery(filter: FacetFilter): BuiltQuery | null {
 
     let mapCodes: number[] | null = null;
     if (filter.map) {
-        // "oasis" (both versions), "oasis:classic" or "oasis:reversed"
-        const wanted = parseMapFilter(filter.map);
-        mapCodes = wanted
-            ? namesOf('map')
-                  .filter((m) => mapFits(m, wanted))
-                  .map((m) => codeOf('map', m)!)
-            : [];
+        mapCodes = mapCodesFor(filter.map);
         if (mapCodes.length === 0) return null;
     }
+    const exMapCodes = [...new Set(filter.exMaps.flatMap(mapCodesFor))];
+    const exHeroes = exHeroCodes(filter.exHeroes);
+    const exTowers = exTowerCodes(filter.exTowers);
 
     const playerCodes = resolvePlayers(filter.player, filter.playerId, filter.allNames);
     const playerCodes2 = sameSide ? resolvePlayers(filter.player2, undefined, filter.allNames) : null;
@@ -404,6 +426,7 @@ function buildQuery(filter: FacetFilter): BuiltQuery | null {
     // computed part: unpacked fields
     const exprs: object[] = [];
     if (mapCodes) exprs.push({ $in: [mapExpr, mapCodes] });
+    if (exMapCodes.length) exprs.push({ $not: [{ $in: [mapExpr, exMapCodes] }] });
 
     let sides: BuiltQuery['sides'] = null;
     if (sameSide) {
@@ -411,11 +434,15 @@ function buildQuery(filter: FacetFilter): BuiltQuery | null {
             players: playerCodes,
             heroes: heroSets[0] ?? null,
             towers: towerCodes,
+            exHeroes,
+            exTowers,
         };
         const two: SideSpec = {
             players: playerCodes2,
             heroes: heroSets2[0] ?? null,
             towers: towerCodes2,
+            exHeroes: exHeroCodes(filter.exHeroes2),
+            exTowers: exTowerCodes(filter.exTowers2),
         };
         // side 1 can be the left or the right player, side 2 is then the other one
         const straight = allOf([
@@ -450,6 +477,11 @@ function buildQuery(filter: FacetFilter): BuiltQuery | null {
         }
         if (towerCodes.length) {
             exprs.push({ $setIsSubset: [towerCodes, [...towersExpr('$x'), ...towersExpr('$y')]] });
+        }
+        // exclusions: neither player
+        if (exHeroes.length) exprs.push(noneOf(exHeroes, [heroExpr('$x'), heroExpr('$y')]));
+        if (exTowers.length) {
+            exprs.push(noneOf(exTowers, [...towersExpr('$x'), ...towersExpr('$y')]));
         }
     }
     if (exprs.length) match.$expr = exprs.length === 1 ? exprs[0] : { $and: exprs };
@@ -589,7 +621,8 @@ export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptio
     const sameSide = filter.sameSide && canUseSameSide(filter);
 
     const full = buildQuery(filter);
-    const withoutMap = buildQuery({ ...filter, map: undefined });
+    // maps are counted without the map filters: excluded maps keep their name, image and count
+    const withoutMap = buildQuery({ ...filter, map: undefined, exMaps: [] });
     // a selected hero with a chosen variant: count its variants as if "any variant"
     const selectedOf = (key: 'heroes' | 'heroes2'): SelectedHero[] =>
         filter[key].map((pick, i) => {

@@ -12,6 +12,7 @@ import {
 import { getSeasonById } from '@/services/seasons';
 import { computeStats, type StatsSeasonGroup } from '@/services/stats';
 import { playerNames } from '@/data/playerNames';
+import { MAX_EX_HEROES, MAX_EX_MAPS, MAX_EX_TOWERS } from '@/config/constants';
 import { logger } from '@/utils/logger';
 import { parseMapFilter } from '@/utils/matchLabels';
 
@@ -20,6 +21,40 @@ export const stats = new Hono();
 const USER_ID = /^[a-z0-9]{8,64}$/i;
 const NAME = /^[A-Za-z0-9_]{1,40}$/;
 const PLAYER_SCOPES = VERSUS_RANGES;
+
+/** "Druid,Ninja": valid names, each once, at most `max`. */
+const nameList = (value: string | undefined, max: number) =>
+    [
+        ...new Set(
+            (value ?? '')
+                .split(',')
+                .map((t) => t.trim())
+                .filter((t) => NAME.test(t)),
+        ),
+    ].slice(0, max);
+
+/** A comma list read item by item: the valid ones, one per base, at most `max`. */
+function parsedList<T extends { base: string }>(
+    value: string | undefined,
+    parse: (item: string) => T | undefined,
+    max: number,
+): T[] {
+    const out: T[] = [];
+    for (const item of (value ?? '').split(',')) {
+        const parsed = parse(item.trim());
+        if (!parsed || out.some((o) => o.base === parsed.base)) continue;
+        out.push(parsed);
+        if (out.length === max) break;
+    }
+    return out;
+}
+
+/** "Quincy" (any variant) or "Quincy:Quincy_Cyber". */
+function parseHero(value: string | undefined) {
+    const [base, variant] = (value ?? '').split(':');
+    if (!base || !NAME.test(base)) return undefined;
+    return variant && NAME.test(variant) ? { base, hero: variant } : { base };
+}
 type PlayerScope = (typeof PLAYER_SCOPES)[number];
 
 /** Answers computed in the last 2 minutes (the cubes behind them are cached longer). */
@@ -37,6 +72,9 @@ const responses = new Map<string, { data: unknown; expires: number }>();
  *   &map=oasis             a map key, both versions; oasis:classic | oasis:reversed for one
  *   &hero=Quincy           a hero base
  *   &towers=Druid,Ninja    up to 3, all in the loadout
+ *   &exHeroes=Quincy,Adora  loadouts without these heroes ("Base:Variant" for one variant)
+ *   &exTowers=Ninja        loadouts with none of these towers
+ *   &exMaps=oasis,dino:reversed  games not on these maps (or versions)
  */
 stats.get('/', async (c) => {
     const seasonParam = c.req.query('season');
@@ -58,21 +96,12 @@ stats.get('/', async (c) => {
     // "oasis" (classic and reversed), "oasis:classic" or "oasis:reversed"
     const map = parseMapFilter(c.req.query('map'));
     // "Quincy" (any variant) or "Quincy:Quincy_Cyber", like /matches-history
-    const [heroBase, heroVariant] = (c.req.query('hero') ?? '').split(':');
-    const hero =
-        heroBase && NAME.test(heroBase)
-            ? heroVariant && NAME.test(heroVariant)
-                ? { base: heroBase, hero: heroVariant }
-                : { base: heroBase }
-            : undefined;
-    const towers = [
-        ...new Set(
-            (c.req.query('towers') ?? '')
-                .split(',')
-                .map((t) => t.trim())
-                .filter((t) => NAME.test(t)),
-        ),
-    ].slice(0, 3);
+    const hero = parseHero(c.req.query('hero'));
+    const towers = nameList(c.req.query('towers'), 3);
+    // exclusions
+    const exHeroes = parsedList(c.req.query('exHeroes'), parseHero, MAX_EX_HEROES);
+    const exTowers = nameList(c.req.query('exTowers'), MAX_EX_TOWERS);
+    const exMaps = parsedList(c.req.query('exMaps'), parseMapFilter, MAX_EX_MAPS);
 
     const cacheKey = JSON.stringify([
         seasonParam ?? 'live',
@@ -81,6 +110,9 @@ stats.get('/', async (c) => {
         map,
         hero,
         towers,
+        exHeroes,
+        exTowers,
+        exMaps,
     ]);
     const hit = responses.get(cacheKey);
     if (hit && hit.expires > Date.now()) {
@@ -122,7 +154,15 @@ stats.get('/', async (c) => {
             return { ...base, bounds, codes, groupKey };
         });
 
-        const data = await computeStats({ seasons: groups, map, hero, towers });
+        const data = await computeStats({
+            seasons: groups,
+            map,
+            hero,
+            towers,
+            exHeroes,
+            exTowers,
+            exMaps,
+        });
         const body = {
             ...data,
             season: seasonParam === 'all' ? 'all' : seasons[0]!.seasonId,
@@ -143,7 +183,11 @@ stats.get('/', async (c) => {
                 map: map ? (map.variant ? map : { base: map.base }) : null,
                 hero: hero ?? null,
                 towers,
+                exHeroes,
+                exTowers,
+                exMaps: exMaps.map((m) => (m.variant ? m : { base: m.base })),
             },
+            maxExcluded: { heroes: MAX_EX_HEROES, towers: MAX_EX_TOWERS, maps: MAX_EX_MAPS },
             seasons: groups.map(({ seasonId, name, bounds, codes }) => ({
                 seasonId,
                 name,

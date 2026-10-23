@@ -84,6 +84,14 @@ export interface MatchesFilter {
     player2?: string; // same player mode only: part of the other side's name
     heroes2: HeroPick[]; // same player mode only: ≤ 1
     towers2: string[]; // same player mode only: ≤ 3
+    /** Exclusions: no player uses these (same player mode: side 1 doesn't). */
+    exHeroes: HeroPick[];
+    exTowers: string[];
+    /** map keys, like `map`: none of these maps (or versions) */
+    exMaps: string[];
+    /** same player mode only: side 2 doesn't use these */
+    exHeroes2: HeroPick[];
+    exTowers2: string[];
 }
 
 export type FacetFilter = Omit<MatchesFilter, 'offset' | 'limit' | 'sort'>;

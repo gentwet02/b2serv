@@ -1,5 +1,12 @@
 import { Hono, type Context } from 'hono';
-import { MATCH_SORTS, MAX_HEROES, MAX_TOWERS } from '@/config/constants';
+import {
+    MATCH_SORTS,
+    MAX_EX_HEROES,
+    MAX_EX_MAPS,
+    MAX_EX_TOWERS,
+    MAX_HEROES,
+    MAX_TOWERS,
+} from '@/config/constants';
 import { env } from '@/config/environment';
 import { crawlState, nextCrawlInMs, refreshMatchesHistory } from '@/services/matchesHistory';
 import {
@@ -35,17 +42,31 @@ const list = (value: string | undefined, max: number) =>
         ),
     ].slice(0, max);
 
-function parseHeroes(value: string | undefined): HeroPick[] {
+function parseHeroes(value: string | undefined, max = MAX_HEROES): HeroPick[] {
     const picks: HeroPick[] = [];
     for (const item of (value ?? '').split(',')) {
         const [base, hero] = item.trim().split(':');
         if (!base || !NAME.test(base) || (hero && !NAME.test(hero))) continue;
         if (picks.some((p) => p.base === base)) continue;
         picks.push(hero ? { base, hero } : { base });
-        if (picks.length === MAX_HEROES) break;
+        if (picks.length === max) break;
     }
     return picks;
 }
+
+/** A map key: "oasis", "oasis:classic" or "oasis:reversed". */
+const cleanMap = (value: string | undefined) =>
+    value?.replace(/[^a-z0-9:]/g, '').slice(0, 60) || undefined;
+
+const mapList = (value: string | undefined, max: number) =>
+    [
+        ...new Set(
+            (value ?? '')
+                .split(',')
+                .map(cleanMap)
+                .filter((m): m is string => !!m),
+        ),
+    ].slice(0, max);
 
 const crawlInfo = () => ({
     isFetching: crawlState.isFetching,
@@ -70,16 +91,17 @@ function parseFilter(c: Context, seasonId: number | null): FacetFilter {
         playerId: playerId && /^[a-z0-9]{8,64}$/i.test(playerId) ? playerId : undefined,
         heroes: parseHeroes(c.req.query('heroes')),
         towers: list(c.req.query('towers'), MAX_TOWERS),
-        map:
-            c.req
-                .query('map')
-                ?.replace(/[^a-z0-9:]/g, '')
-                .slice(0, 60) || undefined,
+        map: cleanMap(c.req.query('map')),
         sameSide: c.req.query('sameSide') === '1',
         allNames: c.req.query('allNames') === '1',
         player2: c.req.query('player2')?.trim().slice(0, 64) || undefined,
         heroes2: parseHeroes(c.req.query('heroes2')).slice(0, 1),
         towers2: list(c.req.query('towers2'), 3),
+        exHeroes: parseHeroes(c.req.query('exHeroes'), MAX_EX_HEROES),
+        exTowers: list(c.req.query('exTowers'), MAX_EX_TOWERS),
+        exMaps: mapList(c.req.query('exMaps'), MAX_EX_MAPS),
+        exHeroes2: parseHeroes(c.req.query('exHeroes2'), MAX_EX_HEROES),
+        exTowers2: list(c.req.query('exTowers2'), MAX_EX_TOWERS),
     };
 }
 
@@ -99,6 +121,10 @@ function parseFilter(c: Context, seasonId: number | null): FacetFilter {
  *   &sameSide=1                    filter each side separately: player, heroes (≤ 1) and
  *                                  towers (≤ 3) describe one side, and
  *   &player2=&heroes2=&towers2=    the other side (either side may be empty)
+ *   &exHeroes=Quincy&exTowers=Ninja,Druid&exMaps=oasis,dino:reversed
+ *                                  exclusions: no player uses these heroes / towers,
+ *                                  not on these maps (same player mode: exHeroes and
+ *                                  exTowers are side 1's, exHeroes2 / exTowers2 side 2's)
  *   &offset=0&limit=20
  */
 matchesHistory.get('/', async (c) => {
@@ -163,6 +189,7 @@ matchesHistory.get('/filters', async (c) => {
             sorts: MATCH_SORTS,
             maxHeroes: MAX_HEROES,
             maxTowers: MAX_TOWERS,
+            maxExcluded: { heroes: MAX_EX_HEROES, towers: MAX_EX_TOWERS, maps: MAX_EX_MAPS },
         });
     } catch (error) {
         logger.error(`Filter options failed: ${error}`);

@@ -44,3 +44,7 @@ export const MAX_UNSAVED = 20_000;
 export const MATCH_SORTS = ['newest', 'oldest', 'longest', 'shortest', 'rounds'] as const;
 export const MAX_HEROES = 2;
 export const MAX_TOWERS = 6;
+/** Exclusions: none of these in the match (or on that side, in same player mode). */
+export const MAX_EX_HEROES = 6;
+export const MAX_EX_TOWERS = 10;
+export const MAX_EX_MAPS = 10;

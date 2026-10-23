@@ -51,6 +51,12 @@ export interface StatsQuery {
     /** any variant of `base`, or exactly `hero` */
     hero?: { base: string; hero?: string | undefined } | undefined;
     towers: string[]; // ≤ 3, all in the loadout
+    /** exclusions: loadouts without these heroes (a base, or one variant) */
+    exHeroes: { base: string; hero?: string | undefined }[];
+    /** exclusions: loadouts with none of these towers */
+    exTowers: string[];
+    /** exclusions: games not on these maps (or map versions) */
+    exMaps: { base: string; variant?: MapVariant | undefined }[];
 }
 
 export interface StatsRow {
@@ -164,12 +170,16 @@ interface DecodedLoadout {
     towers: string[];
     /** "Quincy|Alchemist,Druid,Ninja" (towers sorted) */
     key: string;
+    /** its hero / one of its towers is excluded */
+    heroOut: boolean;
+    towersOut: boolean;
 }
 
 export async function computeStats(query: StatsQuery) {
     await loadCodeBook();
     const cubes = await cubesOf(query.seasons);
     const known = knownHeroBases();
+    const { map, hero, towers, exHeroes, exTowers, exMaps } = query;
 
     const loadouts = new Map<number, DecodedLoadout>();
     const decode = (code: number) => {
@@ -178,7 +188,14 @@ export async function computeStats(query: StatsQuery) {
             const { hero, towers } = unpackLoadout(code);
             const base = heroBase(hero, known);
             const sorted = [...new Set(towers)].sort();
-            found = { base, hero, towers: sorted, key: `${base}|${sorted.join(',')}` };
+            found = {
+                base,
+                hero,
+                towers: sorted,
+                key: `${base}|${sorted.join(',')}`,
+                heroOut: exHeroes.some((h) => h.base === base && (!h.hero || h.hero === hero)),
+                towersOut: sorted.some((t) => exTowers.includes(t)),
+            };
             loadouts.set(code, found);
         }
         return found;
@@ -187,7 +204,7 @@ export async function computeStats(query: StatsQuery) {
     const mapNames = new Map<string, Map<string, number>>(); // row key → raw id → games
     const mapKeys = new Map<
         number,
-        { base: string; variant: MapVariant; split: string; raw: string }
+        { base: string; variant: MapVariant; split: string; raw: string; excluded: boolean }
     >();
     const mapOf = (code: number) => {
         let found = mapKeys.get(code);
@@ -197,14 +214,16 @@ export async function computeStats(query: StatsQuery) {
             const base = mapBaseKey(raw);
             // split rows: "oasis" (classic) and "oasis:reversed"
             const split = variant === 'reversed' ? `${base}:reversed` : base;
-            found = { base, variant, split, raw };
+            const excluded = exMaps.some(
+                (m) => m.base === base && (!m.variant || m.variant === variant),
+            );
+            found = { base, variant, split, raw, excluded };
             mapKeys.set(code, found);
         }
         return found;
     };
     const heroVariants = new Map<string, Map<string, number>>(); // base → raw hero → games
 
-    const { map, hero, towers } = query;
     const group: Wld = [0, 0, 0]; // every game of the group (on the map)
     const selection: Wld = [0, 0, 0]; // games with the focus (hero, towers) on the map
     const groupByMap = new Map<string, Wld>(); // base map and split keys
@@ -225,9 +244,10 @@ export async function computeStats(query: StatsQuery) {
             const loadout = decode(row.loadout);
             const mk = mapOf(row.map);
             const { result: i, n } = row;
-            const heroOk =
+            const heroFits =
                 !hero || (loadout.base === hero.base && (!hero.hero || loadout.hero === hero.hero));
-            const towersOk = towers.every((t) => loadout.towers.includes(t));
+            const heroOk = !loadout.heroOut && heroFits;
+            const towersOk = !loadout.towersOut && towers.every((t) => loadout.towers.includes(t));
 
             for (const key of new Set([mk.base, mk.split])) {
                 const raws = mapNames.get(key) ?? new Map<string, number>();
@@ -241,6 +261,8 @@ export async function computeStats(query: StatsQuery) {
             const versions = mapOptions.get(mk.base) ?? new Map<MapVariant, number>();
             versions.set(mk.variant, (versions.get(mk.variant) ?? 0) + n);
             mapOptions.set(mk.base, versions);
+            // an excluded map: still named and offered above, counted nowhere
+            if (mk.excluded) continue;
             if (heroOk && towersOk) {
                 tally(byMap, mk.base, i, n);
                 tally(byMapVariant, mk.split, i, n);
