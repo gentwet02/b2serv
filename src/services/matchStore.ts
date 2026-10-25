@@ -33,7 +33,6 @@ import {
     mapBaseKey,
     mapFits,
     currentMapId,
-    mapKey,
     mapVariant,
     parseMapFilter,
     type MapVariant,
@@ -998,13 +997,21 @@ interface H2hPick {
     record: Wld;
 }
 
+/**
+ * Like the stats: each list both ways. `maps`, `mine`, `theirs` with variants together
+ * (base map, base hero), the `…Variants` ones apart ("oasis:reversed", "Quincy_Cyber|…").
+ */
 interface H2hTally {
     record: Wld;
     maps: Map<string, Wld>;
+    mapVariants: Map<string, Wld>;
     /** the profile player's loadouts in these games */
     mine: Map<string, Wld>;
     /** the opponent's loadouts in these games */
     theirs: Map<string, Wld>;
+    /** the same loadouts with the exact hero variant ("Quincy_Cyber|…") */
+    mineVariants: Map<string, Wld>;
+    theirsVariants: Map<string, Wld>;
     /** last game, minutes since epoch */
     last: number;
 }
@@ -1027,8 +1034,11 @@ export const RESULT_INDEX: Record<string, WldIndex> = { win: 0, lose: 1, draw: 2
 const newH2hTally = (): H2hTally => ({
     record: [0, 0, 0],
     maps: new Map(),
+    mapVariants: new Map(),
     mine: new Map(),
     theirs: new Map(),
+    mineVariants: new Map(),
+    theirsVariants: new Map(),
     last: 0,
 });
 
@@ -1076,10 +1086,14 @@ function summarize(tally: H2hTally, min: number) {
     const maps = extremes(tally.maps, min);
     const mine = extremes(tally.mine, min);
     const theirs = extremes(tally.theirs, min);
+    const mapsV = extremes(tally.mapVariants, min);
+    const mineV = extremes(tally.mineVariants, min);
+    const theirsV = extremes(tally.theirsVariants, min);
     return {
         record: tally.record,
         lastMet: tally.last ? new Date(tally.last * 60_000).toISOString() : null,
         maps: Object.fromEntries(tally.maps),
+        mapVariants: Object.fromEntries(tally.mapVariants),
         top: {
             map: mostPlayed(tally.maps),
             mine: mostPlayed(tally.mine),
@@ -1087,6 +1101,11 @@ function summarize(tally: H2hTally, min: number) {
         },
         best: { map: maps.best, mine: mine.best, theirs: theirs.best },
         worst: { map: maps.worst, mine: mine.worst, theirs: theirs.worst },
+        /** best and worst with variants apart (reversed maps, hero variants) */
+        variants: {
+            best: { map: mapsV.best, mine: mineV.best, theirs: theirsV.best },
+            worst: { map: mapsV.worst, mine: mineV.worst, theirs: theirsV.worst },
+        },
     };
 }
 
@@ -1096,6 +1115,7 @@ export function labeler() {
     const bases = new Map<string, string>();
     const mapNames = new Map<string, string>(); // key → a raw NK id
     const heroVariants = new Map<string, string>(); // base → a raw NK id
+    const rawHeroes = new Map<string, string>(); // raw NK id → base
 
     const baseOf = (hero: string) => {
         let base = bases.get(hero);
@@ -1107,17 +1127,26 @@ export function labeler() {
     };
 
     return {
-        map(d: number) {
+        /** "oasis" (both versions together), and apart: "oasis" or "oasis:reversed" (as the stats) */
+        map(d: number): VariantKeys {
             const raw = nameOf('map', Math.floor(d / 2 ** D.map) % 2 ** CODE_BITS.map);
-            const key = mapKey(raw);
-            if (!mapNames.has(key)) mapNames.set(key, raw);
-            return key;
+            const key = mapBaseKey(raw);
+            const reversed = mapVariant(raw) === 'reversed';
+            const variant = reversed ? `${key}:reversed` : key;
+            // the base row shows the classic map's name and image
+            const classic = raw.replace(/_reversed$/, '');
+            if (!mapNames.has(key) || !reversed) mapNames.set(key, classic);
+            if (!mapNames.has(variant)) mapNames.set(variant, raw);
+            return { key, variant };
         },
-        loadout(loadout: number) {
+        /** "Quincy|Alchemist,Druid,Ninja", and with the exact hero: "Quincy_Cyber|…" */
+        loadout(loadout: number): VariantKeys {
             const { hero, towers } = unpackLoadout(loadout);
             const base = baseOf(hero);
             if (!heroVariants.has(base) || hero === base) heroVariants.set(base, hero);
-            return `${base}|${[...towers].sort().join(',')}`;
+            rawHeroes.set(hero, base);
+            const list = [...towers].sort().join(',');
+            return { key: `${base}|${list}`, variant: `${hero}|${list}` };
         },
         async labels() {
             const maps: Record<string, { map: string; image: string | null }> = {};
@@ -1142,7 +1171,15 @@ export function labeler() {
                         null,
                 };
             }
-            return { maps, heroes };
+            /** raw hero ("Quincy_Cyber") → base and portrait, for the variant loadouts */
+            const variants: Record<string, { base: string; portrait: string | null }> = {};
+            for (const [hero, base] of rawHeroes) {
+                variants[hero] = {
+                    base,
+                    portrait: (await getAssetUrl('hero', hero)) ?? heroes[base]?.portrait ?? null,
+                };
+            }
+            return { maps, heroes, variants };
         },
     };
 }
@@ -1153,12 +1190,28 @@ function resultFor(doc: StoredMatchDoc, left: boolean): WldIndex | undefined {
     return RESULT_INDEX[left ? leftResult : (opposingResult[leftResult] ?? leftResult)];
 }
 
+/** A map or loadout key with variants together, and apart. */
+interface VariantKeys {
+    key: string;
+    variant: string;
+}
+
 /** One tally for every game of a set (maps, both loadouts, last game). */
-function count(tally: H2hTally, i: WldIndex, map: string, mine: string, theirs: string, t: number) {
+function count(
+    tally: H2hTally,
+    i: WldIndex,
+    map: VariantKeys,
+    mine: VariantKeys,
+    theirs: VariantKeys,
+    t: number,
+) {
     tally.record[i]++;
-    bump(tally.maps, map, i);
-    bump(tally.mine, mine, i);
-    bump(tally.theirs, theirs, i);
+    bump(tally.maps, map.key, i);
+    bump(tally.mapVariants, map.variant, i);
+    bump(tally.mine, mine.key, i);
+    bump(tally.theirs, theirs.key, i);
+    bump(tally.mineVariants, mine.variant, i);
+    bump(tally.theirsVariants, theirs.variant, i);
     tally.last = Math.max(tally.last, t);
 }
 
@@ -1406,8 +1459,11 @@ async function computeVersus(userId: string, seasons: VersusSeason[], withMatche
         total: {
             ...summarize(total, H2H_MIN_GAMES.total),
             mapList: byGames(total.maps),
+            mapVariantList: byGames(total.mapVariants),
             mine: byGames(total.mine, VERSUS_LOADOUTS),
             theirs: byGames(total.theirs, VERSUS_LOADOUTS),
+            mineVariants: byGames(total.mineVariants, VERSUS_LOADOUTS),
+            theirsVariants: byGames(total.theirsVariants, VERSUS_LOADOUTS),
         },
         /** everyone in the group; never-met players have a 0–0 record */
         opponents: [...opponents.values()]
