@@ -35,6 +35,7 @@ export interface NkProfileBody {
     casualStats?: Partial<NkStats>;
     rankedStats?: Partial<NkStats>;
     badges_equipped?: unknown[];
+    badges_all?: unknown[];
     chestsOpened?: number;
     currentSeason?: string;
     currentSeason_highestArena?: string;
@@ -87,6 +88,8 @@ export interface ProfileDoc {
     e: number[];
     /** equipped badges [season + 1, badge code, …] */
     g?: number[];
+    /** every badge (medal) earned, same layout as g */
+    ga?: number[];
     /** 1 vip, 2 club member, 4 in a guild */
     f: number;
     /** guild code */

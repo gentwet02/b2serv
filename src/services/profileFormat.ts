@@ -123,6 +123,7 @@ export function profileNames(body: NkProfileBody): Map<ProfileCodeKind, Set<stri
     add('border', border && assetKey(border));
     add('title', str(body.equippedTitle));
     for (const item of body.badges_equipped ?? []) add('badge', readBadge(item)?.key);
+    for (const item of body.badges_all ?? []) add('badge', readBadge(item)?.key);
     add('arena', str(body.currentSeason_highestArena));
     add('arena', str(body.lifetime_highestArena));
     const guild = str(body.guild);
@@ -172,12 +173,21 @@ export function encodeCurrent(body: NkProfileBody, codec: Codec) {
         opt('title', str(body.equippedTitle)),
     ];
 
-    const g: number[] = [];
-    for (const item of body.badges_equipped ?? []) {
-        const badge = readBadge(item);
-        if (badge)
-            g.push(badge.season === null ? 0 : badge.season + 1, codec.code('badge', badge.key));
-    }
+    /** [season + 1, badge code, …] */
+    const badgeCodes = (items: unknown[] | undefined) => {
+        const out: number[] = [];
+        for (const item of items ?? []) {
+            const badge = readBadge(item);
+            if (badge)
+                out.push(
+                    badge.season === null ? 0 : badge.season + 1,
+                    codec.code('badge', badge.key),
+                );
+        }
+        return out;
+    };
+    const g = badgeCodes(body.badges_equipped);
+    const ga = badgeCodes(body.badges_all);
 
     const guild = str(body.guild);
     const inGuild = !!body.inGuild;
@@ -226,6 +236,7 @@ export function encodeCurrent(body: NkProfileBody, codec: Codec) {
         a,
     };
     if (g.length) current.g = g;
+    if (ga.length) current.ga = ga;
     if (inGuild && guild) current.gu = codec.code('guild', guildKey(guild));
     const u = toBinary(units);
     const b = toBinary(bloons);
@@ -362,6 +373,8 @@ export function applyReading(doc: ProfileDoc | null, code: number, reading: Read
         }
     }
 
+    // old dumps have no badges_all: keep the list we had rather than dropping it
+    if (newest && doc?.ga && !current.ga && body.badges_all === undefined) current.ga = doc.ga;
     const next: ProfileDoc =
         newest || !doc ? { _id: code, t: date, ...current, s: seasons } : { ...doc, s: seasons };
     return next;
@@ -371,13 +384,8 @@ export function applyReading(doc: ProfileDoc | null, code: number, reading: Read
 // decode
 // ---------------------------------------------------------------------------
 
-function decodeEquipped(e: number[], g: number[] | undefined, codec: Codec) {
-    const asset = (kind: ProfileCodeKind, code: number | undefined) => {
-        if (code === undefined || code < 0) return null;
-        const key = codec.name(kind, code);
-        return key ? { key, url: assetUrl(key), name: assetName(key) } : null;
-    };
-    const titleCode = e[3];
+/** [season + 1, badge code, …] → badges as NK sends them */
+function decodeBadges(g: number[] | undefined, codec: Codec) {
     const badges: { season: number | null; name: string; iconURL: string | null }[] = [];
     for (let i = 0; g && i + 1 < g.length; i += 2) {
         const key = codec.name('badge', g[i + 1]!);
@@ -389,6 +397,17 @@ function decodeEquipped(e: number[], g: number[] | undefined, codec: Codec) {
             iconURL: icon ? assetUrl(icon) : null,
         });
     }
+    return badges;
+}
+
+function decodeEquipped(e: number[], g: number[] | undefined, codec: Codec) {
+    const asset = (kind: ProfileCodeKind, code: number | undefined) => {
+        if (code === undefined || code < 0) return null;
+        const key = codec.name(kind, code);
+        return key ? { key, url: assetUrl(key), name: assetName(key) } : null;
+    };
+    const titleCode = e[3];
+    const badges = decodeBadges(g, codec);
     return {
         avatar: asset('avatar', e[0]),
         banner: asset('banner', e[1]),
@@ -495,6 +514,7 @@ export function decodeProfile(doc: ProfileDoc, displayName: string, codec: Codec
         casualStats: statsOf(doc.c),
         rankedStats: statsOf(doc.r),
         badges_equipped: equipped.badges,
+        badges_all: decodeBadges(doc.ga, codec),
         chestsOpened: a[8] ?? 0,
         currentSeason: a[0] ? `season_${a[0] - 1}` : 'none',
         currentSeason_trophies: a[1] ?? 0,
@@ -534,10 +554,14 @@ const minusOne = (values: number[]) => values.map((v) => v - 1);
 /**
  * Current numbers:
  *   [format, flags, guild code + 1 (0 none), e+1 ×4, ranked ×7, casual ×7, a ×9,
- *    badge count n, (badge season + 1, badge code) ×n]
+ *    badge count n, (badge season + 1, badge code) ×n,
+ *    all badges count m, (badge season + 1, badge code) ×m]
+ * The all-badges list came later: documents without it end after the equipped badges and
+ * read as an empty list (the cursor gives 0 past the end).
  */
 function packCurrent(doc: ProfileDoc): number[] {
     const g = doc.g ?? [];
+    const ga = doc.ga ?? [];
     return [
         FORMAT,
         doc.f,
@@ -548,6 +572,8 @@ function packCurrent(doc: ProfileDoc): number[] {
         ...pad(doc.a, 9, 0),
         g.length / 2,
         ...g,
+        ga.length / 2,
+        ...ga,
     ];
 }
 
@@ -622,6 +648,8 @@ export function unpack(stored: StoredProfileDoc): ProfileDoc {
     };
     const g = v.many(v.one() * 2);
     if (g.length) doc.g = g;
+    const ga = v.many(v.one() * 2);
+    if (ga.length) doc.ga = ga;
     if (gu > 0) doc.gu = gu - 1;
     if (stored.u) doc.u = stored.u;
     if (stored.b) doc.b = stored.b;

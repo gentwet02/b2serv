@@ -16,6 +16,7 @@ import {
     versus,
 } from '@/services/matchStore';
 import { getLiveMatches } from '@/services/liveMatches';
+import { clanIdOf, getClan } from '@/services/clanStore';
 import { getProfileSeason, getStoredProfile } from '@/services/profileStore';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
 import { logger } from '@/utils/logger';
@@ -35,7 +36,7 @@ import {
  * Player data for the client, from the database (background jobs keep it up to date).
  * The one exception, /:id/matches, is rate limited (services/liveMatches.ts).
  *
- * GET /users/:id           stored profile (NK body + our season records), never asks NK
+ * GET /users/:id           stored profile (NK body + our season records + clan), never asks NK
  * GET /users/:id/matches   NK's latest matches (fallback when we stored none), rate limited
  * GET /users/:id/season    season record: stored matches (W/D/L, heroes) + stored profile (streaks)
  * GET /users/:id/seasons   W/D/L in every stored season, from the stored matches
@@ -114,10 +115,18 @@ async function storedProfile(c: Context) {
         }
         const { seasons, ...body } = stored.body;
         const data = fixProfileAssets({ success: true, error: null, body });
+        const clanId = body.inGuild ? clanIdOf(body.guild) : null;
+        const clan = clanId
+            ? await getClan(clanId).catch((error) => {
+                  logger.warn(`Clan ${clanId} of ${id} failed: ${error}`);
+                  return null;
+              })
+            : null;
         c.header('Cache-Control', 'public, max-age=60');
         return c.json({
             ...data,
             seasons: seasons.map(fixSeasonAssets),
+            clan,
             fetchedAt: stored.fetchedAt.toISOString(),
         });
     } catch (error) {

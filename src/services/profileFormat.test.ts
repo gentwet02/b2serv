@@ -80,6 +80,18 @@ function body(
                 iconURL: `${A}270630227abcdfdf5d3965edf083f5d0_season_medal_moab.png`,
             },
         ],
+        badges_all: [
+            {
+                season: 1,
+                name: 'Arena_Master_Top75Percent',
+                iconURL: `${A}aa30630227abcdfdf5d3965edf083f5d_season_medal_hom_top75.png`,
+            },
+            {
+                season: 18,
+                name: 'Arena_MOAB',
+                iconURL: `${A}270630227abcdfdf5d3965edf083f5d0_season_medal_moab.png`,
+            },
+        ],
         chestsOpened: 81,
         currentSeason: `season_${season}`,
         currentSeason_highestArena: 'zomg',
@@ -128,6 +140,27 @@ describe('varints', () => {
 });
 
 describe('profile round trip', () => {
+    test('keeps every medal with its season', () => {
+        const codec = memoryCodec();
+        const b = body([767, 0, 320, 0, 23]);
+        const doc = read(null, codec, b, day(0), 19);
+        const out = decodeProfile(doc, 'Fabim', codec);
+        expect(out.badges_all).toEqual(b.badges_all as never);
+        expect(out.badges_equipped).toEqual(b.badges_equipped as never);
+        // a later reading without the field (old dump) keeps the list
+        const { badges_all: _, ...older } = b;
+        const next = read(doc, codec, older, day(1), 19);
+        expect(decodeProfile(next, 'Fabim', codec).badges_all).toEqual(b.badges_all as never);
+    });
+
+    test('documents stored before the medal list still read', () => {
+        const codec = memoryCodec();
+        const { badges_all: _, ...b } = body([767, 0, 320, 0, 23]);
+        const doc = read(null, codec, b, day(0), 19);
+        expect(doc.ga).toBeUndefined();
+        expect(decodeProfile(doc, 'Fabim', codec).badges_all).toEqual([]);
+    });
+
     test('decode gives back the NK body', () => {
         const codec = memoryCodec();
         const b = body([767, 0, 320, 0, 23]);

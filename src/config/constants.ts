@@ -5,6 +5,7 @@ export const NK_API = {
         `${NK_API_BASE_URL}/homs/season_${seasonId}/leaderboard${page ? `?page=${page}` : ''}`,
     PLAYER_MATCHES: (userId: string) => `${NK_API_BASE_URL}/users/${userId}/matches`,
     PLAYER_PROFILE: (userId: string) => `${NK_API_BASE_URL}/users/${userId}`,
+    GUILD: (guildId: string) => `${NK_API_BASE_URL}/guild/${guildId}`,
     SEASONS: `${NK_API_BASE_URL}/homs`,
 } as const;
 

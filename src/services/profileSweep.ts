@@ -1,5 +1,6 @@
 import { env } from '@/config/environment';
 import { NK_API } from '@/config/constants';
+import { clanIdOf, refreshClans } from '@/services/clanStore';
 import { ensureLeaderboard, getLeaderboardPlayers } from '@/services/leaderboard';
 import { lastReadTimes, storeReadings, type ProfileReading } from '@/services/profileStore';
 import { getLiveSeason, getSeasons, seasonAt, toMs } from '@/services/seasons';
@@ -91,6 +92,17 @@ export async function sweepProfiles(): Promise<void> {
             } catch (error) {
                 sweepState.failed += batch.length;
                 logger.error(`Storing ${batch.length} profile(s) failed: ${error}`);
+            }
+            // the clans of this batch: each read at most once a day, so this is cheap
+            try {
+                await refreshClans(
+                    batch.flatMap((r) => {
+                        const id = r.body.inGuild ? clanIdOf(r.body.guild) : null;
+                        return id ? [id] : [];
+                    }),
+                );
+            } catch (error) {
+                logger.error(`Clan refresh failed: ${error}`);
             }
         });
     };
