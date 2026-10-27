@@ -134,7 +134,9 @@ async function eachGameBetween(
 ) {
     if (a.length === 0 || b?.length === 0) return;
     const any = (codes: number[]) => (codes.length === 1 ? codes[0] : { $in: codes });
-    const small = b && Math.max(a.length, b.length) > BIG_SIDE ? (a.length <= b.length ? a : b) : null;
+    // only when one side is small: two big sides (whole leaderboards) keep the exact query
+    const [smaller, bigger] = b && a.length <= b.length ? [a, b] : [b ?? a, a];
+    const small = b && smaller.length <= BIG_SIDE && bigger.length > BIG_SIDE ? smaller : null;
     const filter = small
         ? { $or: [{ a: any(small) }, { b: any(small) }] }
         : b
@@ -143,6 +145,8 @@ async function eachGameBetween(
     const cursor = collection(seasonId).find(filter, {
         projection: { t: 1, a: 1, b: 1, x: 1, y: 1, d: 1 },
         maxTimeMS: HEAVY_QUERY_MAX_MS,
+        // small batches: a 16 MB batch is ~200k games turned into objects at once (1 GB VM)
+        batchSize: 2000,
     });
     for await (const doc of cursor) visit(doc as StoredMatchDoc);
 }
