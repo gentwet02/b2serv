@@ -1,14 +1,12 @@
 import { CODE_BITS, loadCodeBook, nameOf } from '@/services/codeBook';
 import { getAssetUrl } from '@/services/matchMeta';
+import { RESULT_INDEX, type Wld, type WldIndex } from '@/services/h2h';
 import {
     collection,
     knownHeroBases,
     mapExpr,
     opposingResult,
-    RESULT_INDEX,
     unpackLoadout,
-    type Wld,
-    type WldIndex,
 } from '@/services/matchStore';
 import { getLiveSeason } from '@/services/seasons';
 import { logger } from '@/utils/logger';
@@ -40,7 +38,11 @@ interface CubeRow {
 export interface StatsSeasonGroup {
     seasonId: number;
     codes: number[] | null;
-    /** identifies the group in the cache ("t25", "p:1234", "everyone") */
+    /** only their games against these players (null or missing: against anyone) */
+    against?: number[] | null | undefined;
+    /** and only when the opponent's loadout fits: the condition with the opponent as a (x) or b (y) */
+    opponent?: SideExprs | null | undefined;
+    /** identifies the group (and who they played) in the cache ("t25", "p:1234|vs:t100") */
     groupKey: string;
 }
 
@@ -59,6 +61,12 @@ export interface StatsQuery {
     exMaps: { base: string; variant?: MapVariant | undefined }[];
 }
 
+/** A loadout condition ($expr) for each place a player can have in a game. */
+export interface SideExprs {
+    onX: object | null;
+    onY: object | null;
+}
+
 export interface StatsRow {
     key: string;
     record: Wld;
@@ -72,16 +80,27 @@ const MAX_LOADOUTS = 500;
 const cubeCache = new Map<string, { rows: CubeRow[]; expires: number }>();
 const pending = new Map<string, Promise<CubeRow[]>>();
 
-async function buildCube(seasonId: number, codes: number[] | null): Promise<CubeRow[]> {
-    if (codes?.length === 0) return [];
+async function buildCube(
+    seasonId: number,
+    codes: number[] | null,
+    against: number[] | null = null,
+    opponent: SideExprs | null = null,
+): Promise<CubeRow[]> {
+    if (codes?.length === 0 || against?.length === 0) return [];
     const sides = [
-        { player: 'a', loadout: '$x', left: true },
-        { player: 'b', loadout: '$y', left: false },
+        { player: 'a', other: 'b', loadout: '$x', left: true },
+        { player: 'b', other: 'a', loadout: '$y', left: false },
     ];
     const merged = new Map<string, CubeRow>();
     for (const side of sides) {
         const pipeline: object[] = [];
-        if (codes) pipeline.push({ $match: { [side.player]: { $in: codes } } });
+        const match: Record<string, object> = {};
+        if (codes) match[side.player] = { $in: codes };
+        if (against) match[side.other] = { $in: against };
+        // the opponent's loadout: on y when the group's player is a, on x when b
+        const expr = opponent && (side.left ? opponent.onY : opponent.onX);
+        if (expr) match.$expr = expr;
+        if (Object.keys(match).length) pipeline.push({ $match: match });
         pipeline.push({
             $group: {
                 _id: {
@@ -112,7 +131,13 @@ async function buildCube(seasonId: number, codes: number[] | null): Promise<Cube
 }
 
 /** The cube of one season and group, from the cache when fresh. */
-function seasonCube({ seasonId, codes, groupKey }: StatsSeasonGroup): Promise<CubeRow[]> {
+function seasonCube({
+    seasonId,
+    codes,
+    against,
+    opponent,
+    groupKey,
+}: StatsSeasonGroup): Promise<CubeRow[]> {
     const key = `${seasonId}:${groupKey}`;
     const hit = cubeCache.get(key);
     if (hit && hit.expires > Date.now()) return Promise.resolve(hit.rows);
@@ -120,7 +145,7 @@ function seasonCube({ seasonId, codes, groupKey }: StatsSeasonGroup): Promise<Cu
     if (running) return running;
 
     const started = Date.now();
-    const promise = buildCube(seasonId, codes)
+    const promise = buildCube(seasonId, codes, against ?? null, opponent ?? null)
         .then((rows) => {
             const live = getLiveSeason()?.seasonId === seasonId;
             if (cubeCache.size >= MAX_CUBES) cubeCache.clear();
@@ -395,5 +420,148 @@ export async function computeStats(query: StatsQuery) {
                 .sort((a, b) => b.count - a.count),
         },
         labels,
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Sides filtered separately: the opponents' heroes and towers to pick from
+// ---------------------------------------------------------------------------
+
+interface OpponentRow {
+    /** the opponent's packed loadout */
+    loadout: number;
+    map: number;
+    n: number;
+}
+
+const opponentCubes = new Map<string, { rows: OpponentRow[]; expires: number }>();
+
+/** The opponents' loadouts × maps in the group's games (the group's loadout filter applied). */
+async function buildOpponentCube(
+    seasonId: number,
+    codes: number[],
+    against: number[] | null,
+    own: SideExprs | null,
+): Promise<OpponentRow[]> {
+    if (codes.length === 0 || against?.length === 0) return [];
+    const sides = [
+        { player: 'a', other: 'b', theirs: '$y', left: true },
+        { player: 'b', other: 'a', theirs: '$x', left: false },
+    ];
+    const merged = new Map<string, OpponentRow>();
+    for (const side of sides) {
+        const match: Record<string, object> = { [side.player]: { $in: codes } };
+        if (against) match[side.other] = { $in: against };
+        const expr = own && (side.left ? own.onX : own.onY);
+        if (expr) match.$expr = expr;
+        const rows = await collection(seasonId)
+            .aggregate<{ _id: { l: number; m: number }; n: number }>(
+                [
+                    { $match: match },
+                    { $group: { _id: { l: side.theirs, m: mapExpr }, n: { $sum: 1 } } },
+                ],
+                { allowDiskUse: true },
+            )
+            .toArray();
+        for (const { _id, n } of rows) {
+            const key = `${_id.l}:${_id.m}`;
+            const row = merged.get(key);
+            if (row) row.n += n;
+            else merged.set(key, { loadout: _id.l, map: _id.m, n });
+        }
+    }
+    return [...merged.values()];
+}
+
+export interface OpponentOptionsQuery {
+    seasons: StatsSeasonGroup[];
+    /** the group's own loadout filter, and its cache key */
+    own: SideExprs | null;
+    ownKey: string;
+    map?: { base: string; variant?: MapVariant | undefined } | undefined;
+    exMaps: { base: string; variant?: MapVariant | undefined }[];
+    /** the opponents' current picks: an option must still fit them */
+    hero?: { base: string; hero?: string | undefined } | undefined;
+    towers: string[];
+    exHeroes: { base: string; hero?: string | undefined }[];
+    exTowers: string[];
+}
+
+/** The heroes (with variants) and towers the opponents can still be filtered on. */
+export async function opponentOptions(query: OpponentOptionsQuery) {
+    await loadCodeBook();
+    const known = knownHeroBases();
+    const cubes = await Promise.all(
+        query.seasons.map(async (g) => {
+            const key = `${g.seasonId}:${g.groupKey}:own:${query.ownKey}`;
+            const hit = opponentCubes.get(key);
+            if (hit && hit.expires > Date.now()) return hit.rows;
+            const rows = await buildOpponentCube(g.seasonId, g.codes ?? [], g.against ?? null, query.own);
+            const live = getLiveSeason()?.seasonId === g.seasonId;
+            if (opponentCubes.size >= MAX_CUBES) opponentCubes.clear();
+            opponentCubes.set(key, {
+                rows,
+                expires: Date.now() + (live ? CUBE_TTL_MS.live : CUBE_TTL_MS.past),
+            });
+            return rows;
+        }),
+    );
+
+    const heroes = new Map<string, Map<string, number>>(); // base → raw hero → games
+    const towers = new Map<string, number>();
+    const { map, hero, exHeroes, exTowers, exMaps } = query;
+    for (const rows of cubes) {
+        for (const row of rows) {
+            const raw = nameOf('map', row.map);
+            const base = mapBaseKey(raw);
+            const variant = mapVariant(raw);
+            if (exMaps.some((m) => m.base === base && (!m.variant || m.variant === variant))) continue;
+            if (map && (base !== map.base || (map.variant && variant !== map.variant))) continue;
+
+            const loadout = unpackLoadout(row.loadout);
+            const heroBaseName = heroBase(loadout.hero, known);
+            const sorted = [...new Set(loadout.towers)];
+            const heroOut = exHeroes.some(
+                (h) => h.base === heroBaseName && (!h.hero || h.hero === loadout.hero),
+            );
+            const towersOk =
+                !sorted.some((t) => exTowers.includes(t)) &&
+                query.towers.every((t) => sorted.includes(t));
+            const heroOk =
+                !heroOut &&
+                (!hero || (heroBaseName === hero.base && (!hero.hero || loadout.hero === hero.hero)));
+            if (towersOk) {
+                const variants = heroes.get(heroBaseName) ?? new Map<string, number>();
+                add(variants, loadout.hero, row.n);
+                heroes.set(heroBaseName, variants);
+            }
+            if (heroOk && towersOk) for (const t of sorted) add(towers, t, row.n);
+        }
+    }
+
+    return {
+        heroes: await Promise.all(
+            [...heroes]
+                .map(([base, variants]) => ({
+                    base,
+                    count: [...variants.values()].reduce((sum, n) => sum + n, 0),
+                    variants: [...variants]
+                        .map(([hero, count]) => ({ hero, count }))
+                        .sort((a, b) => b.count - a.count),
+                }))
+                .sort((a, b) => a.base.localeCompare(b.base))
+                .map(async (h) => ({
+                    ...h,
+                    variants: await Promise.all(
+                        h.variants.map(async (v) => ({
+                            ...v,
+                            portrait: await getAssetUrl('hero', v.hero),
+                        })),
+                    ),
+                })),
+        ),
+        towers: [...towers]
+            .map(([tower, count]) => ({ tower, count }))
+            .sort((a, b) => a.tower.localeCompare(b.tower)),
     };
 }

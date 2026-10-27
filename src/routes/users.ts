@@ -1,20 +1,8 @@
 import { Hono, type Context } from 'hono';
 import { getConnInfo } from 'hono/bun';
-import {
-    readLeaderboard,
-    getRankHistory,
-    getLeaderboardSize,
-    getRankRange,
-    getSeasonRank,
-} from '@/services/leaderboard';
-import {
-    getPlayerSeasonRecords,
-    getSeasonStats,
-    headToHead,
-    OpponentInput,
-    opponentsMet,
-    versus,
-} from '@/services/matchStore';
+import { readLeaderboard, getRankHistory } from '@/services/leaderboard';
+import { getPlayerSeasonRecords, getSeasonStats } from '@/services/matchStore';
+import { headToHead, opponentsMet, type OpponentInput } from '@/services/h2h';
 import { getLiveMatches } from '@/services/liveMatches';
 import { clanIdOf, getClan } from '@/services/clanStore';
 import { getProfileSeason, getStoredProfile } from '@/services/profileStore';
@@ -22,15 +10,7 @@ import { getLiveSeason, getSeasonById } from '@/services/seasons';
 import { logger } from '@/utils/logger';
 import { fixAssetUrl, fixProfileAssets } from '@/utils/assets';
 import { extractUserId } from '@/utils/helpers';
-import { VersusSeason } from '@/types/season';
-import {
-    excludedRange,
-    parseExclude,
-    rangeBounds,
-    resolveSeasons,
-    VERSUS_RANGES,
-    type VersusRange,
-} from '@/services/ranges';
+import { resolveSeasons } from '@/services/ranges';
 
 /**
  * Player data for the client, from the database (background jobs keep it up to date).
@@ -42,7 +22,6 @@ import {
  * GET /users/:id/seasons   W/D/L in every stored season, from the stored matches
  * GET /users/:id/ranks     rank in every stored season, best end-of-season finish
  * GET /users/:id/compare   the player against the season's top 10, or ?with=id1,id2…
- * GET /users/:id/versus    head to head against one player or a leaderboard range
  * GET /users/:id/opponents everyone the player met, most games first
  */
 export const users = new Hono();
@@ -229,92 +208,6 @@ users.get('/:id/compare', async (c) => {
         });
     } catch (error) {
         logger.error(`Head to head of ${id} failed: ${error}`);
-        const message = 'Could not compute the head to head.';
-        return c.json({ message, error: message }, 500);
-    }
-});
-
-/**
- * GET /users/:id/versus: only the games the player played against these opponents
- *   ?season=46 | all      default: live season
- *   &vs=<id>              one opponent, with the latest games between them
- *   &range=t10|t25|t50|t100|t25p|t50p|t75p|all
- *                         or: a range of each season's leaderboard, counted in that season
- *   &exclude=t10          leave out a smaller range: the top 50 without the top 10
- *   &band=1               (old) leave out the previous threshold
- */
-users.get('/:id/versus', async (c) => {
-    const id = c.req.param('id');
-    if (!USER_ID.test(id)) return invalid(c);
-    const seasonParam = c.req.query('season');
-    const seasons = await resolveSeasons(seasonParam);
-    if (!seasons) {
-        const message = 'Unknown season';
-        return c.json({ message, error: message }, 404);
-    }
-
-    const vs = c.req.query('vs');
-    if (vs !== undefined && (!USER_ID.test(vs) || vs === id)) {
-        const message = 'Invalid opponent';
-        return c.json({ message, error: message }, 400);
-    }
-    const rangeParam = c.req.query('range') ?? 't10';
-    const range: VersusRange = (VERSUS_RANGES as readonly string[]).includes(rangeParam)
-        ? (rangeParam as VersusRange)
-        : 't10';
-    const exclude = vs ? null : parseExclude(range, c.req.query('exclude'), c.req.query('band'));
-
-    try {
-        // one season: make sure its leaderboard is loaded (ranks, ranges)
-        if (seasons.length === 1) {
-            const season = getSeasonById(seasons[0].seasonId);
-            if (season) await readLeaderboard(season);
-        }
-
-        const missing: number[] = [];
-        const groups: VersusSeason[] = seasons.map((season) => {
-            if (vs) {
-                return {
-                    seasonId: season.seasonId,
-                    name: season.name,
-                    opponents: [{ userId: vs, rank: getSeasonRank(season.seasonId, vs) }],
-                };
-            }
-            const size = getLeaderboardSize(season.seasonId);
-            if (size === null) {
-                missing.push(season.seasonId);
-                return { seasonId: season.seasonId, name: season.name, opponents: [] };
-            }
-            const bounds = rangeBounds(range, exclude, size);
-            return {
-                seasonId: season.seasonId,
-                name: season.name,
-                bounds,
-                opponents: getRankRange(season.seasonId, bounds.from, bounds.to) ?? [],
-            };
-        });
-
-        const data = await versus(id, groups, {
-            withMatches: !!vs,
-            cacheKey: `${seasonParam ?? 'live'}:${vs ?? `${range}${exclude ? `-${exclude}` : ''}`}`,
-        });
-        c.header('Cache-Control', 'public, max-age=60');
-        return c.json({
-            ...data,
-            userId: id,
-            season: seasonParam === 'all' ? 'all' : seasons[0].seasonId,
-            seasonName: seasonParam === 'all' ? 'All seasons' : seasons[0].name,
-            mode: vs ? 'player' : 'top',
-            vs: vs ?? null,
-            range: vs ? null : range,
-            /** the range left out at the top */
-            exclude: excludedRange(range, exclude),
-            band: !!exclude,
-            /** seasons whose leaderboard the server doesn't have yet (range mode) */
-            missingSeasons: missing,
-        });
-    } catch (error) {
-        logger.error(`Versus of ${id} failed: ${error}`);
         const message = 'Could not compute the head to head.';
         return c.json({ message, error: message }, 500);
     }

@@ -1,5 +1,5 @@
 import { Env, Hono, Schema } from 'hono';
-import { avatars, info, leaderboard, matches, matchesHistory, players, stats, users } from './routes';
+import { avatars, compare, info, leaderboard, matches, matchesHistory, players, stats, users } from './routes';
 
 interface Router {
     [path: string]: Hono<Env, Schema, string>;
@@ -7,6 +7,7 @@ interface Router {
 
 const router: Router = {
     '/avatars': avatars,
+    '/compare': compare,
     '/info': info,
     '/leaderboard': leaderboard,
     '/matches': matches,

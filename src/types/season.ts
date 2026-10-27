@@ -21,11 +21,18 @@ export interface Season {
 
 export type SeasonName = `Season ${number}`;
 
-/** One season of a comparison and the opponents counted in it (rank in that season). */
-export interface VersusSeason {
-    seasonId: number;
-    name: string;
+/** One side of a comparison in a season: a player, or a range of that season's leaderboard. */
+export interface CompareSide {
     /** ranks counted and leaderboard size (range mode) */
     bounds?: { from: number; to: number; size: number } | undefined;
-    opponents: { userId: string; rank: number | null; name?: string | undefined }[];
+    /** null: anyone (side 2 only) */
+    players: { userId: string; rank: number | null; name?: string | undefined }[] | null;
+}
+
+/** One season of a comparison: who is on each side that season (rank in that season). */
+export interface CompareSeason {
+    seasonId: number;
+    name: string;
+    a: CompareSide;
+    b: CompareSide;
 }
