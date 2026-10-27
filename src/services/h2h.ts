@@ -11,6 +11,7 @@ import {
 } from '@/services/matchStore';
 import type { StoredMatchDoc } from '@/types/match';
 import { cached } from '@/utils/cache';
+import { heavy, HEAVY_QUERY_MAX_MS } from '@/utils/heavy';
 import { currentMapId, heroBase, mapBaseKey, mapVariant } from '@/utils/matchLabels';
 
 /**
@@ -255,7 +256,7 @@ async function gamesAgainst(seasonId: number, me: number, codes: number[]) {
     if (codes.length > 300) {
         const wanted = new Set(codes);
         const docs = await collection(seasonId)
-            .find({ $or: [{ a: me }, { b: me }] }, { projection })
+            .find({ $or: [{ a: me }, { b: me }] }, { projection, maxTimeMS: HEAVY_QUERY_MAX_MS })
             .toArray();
         return docs.filter((doc) => wanted.has(doc.a === me ? doc.b : doc.a));
     }
@@ -267,7 +268,7 @@ async function gamesAgainst(seasonId: number, me: number, codes: number[]) {
                     { b: me, a: { $in: codes } },
                 ],
             },
-            { projection },
+            { projection, maxTimeMS: HEAVY_QUERY_MAX_MS },
         )
         .toArray();
 }
@@ -285,7 +286,7 @@ export const nameOfUser = (userId: string, fallback?: string) => {
  */
 export function headToHead(seasonId: number | null, userId: string, opponents: OpponentInput[]) {
     const key = `card:${seasonId ?? 'all'}:${userId}:${opponents.map((o) => o.userId).join(',')}`;
-    return cached(key, () => computeHeadToHead(seasonId, userId, opponents));
+    return cached(key, () => heavy(() => computeHeadToHead(seasonId, userId, opponents)));
 }
 
 async function computeHeadToHead(
@@ -351,34 +352,39 @@ export async function storedNameOf(userId: string) {
 
 /** Everyone the player met in these seasons, most games first (the "pick a player" list). */
 export function opponentsMet(userId: string, seasonIds: number[]) {
-    return cached(`met:${userId}:${seasonIds.join(',')}`, async () => {
-        await loadCodeBook();
-        const me = playerCodeOf(userId);
-        if (me === undefined) return [];
-        const records = new Map<number, Wld>();
-        for (const seasonId of seasonIds) {
-            const docs = await collection(seasonId)
-                .find({ $or: [{ a: me }, { b: me }] }, { projection: { a: 1, b: 1, d: 1 } })
-                .toArray();
-            for (const doc of docs) {
-                const left = doc.a === me;
-                const i = resultFor(doc, left);
-                if (i !== undefined) bump(records, left ? doc.b : doc.a, i);
+    return cached(`met:${userId}:${seasonIds.join(',')}`, () =>
+        heavy(async () => {
+            await loadCodeBook();
+            const me = playerCodeOf(userId);
+            if (me === undefined) return [];
+            const records = new Map<number, Wld>();
+            for (const seasonId of seasonIds) {
+                const docs = await collection(seasonId)
+                    .find(
+                        { $or: [{ a: me }, { b: me }] },
+                        { projection: { a: 1, b: 1, d: 1 }, maxTimeMS: HEAVY_QUERY_MAX_MS },
+                    )
+                    .toArray();
+                for (const doc of docs) {
+                    const left = doc.a === me;
+                    const i = resultFor(doc, left);
+                    if (i !== undefined) bump(records, left ? doc.b : doc.a, i);
+                }
             }
-        }
-        return [...records]
-            .map(([code, record]) => {
-                const player = playerOf(code);
-                return {
-                    userId: player?.u ?? '',
-                    name: player?.n ?? null,
-                    alias: playerNames[player?.u ?? ''] ?? null,
-                    record,
-                };
-            })
-            .filter((o) => o.userId && o.userId !== userId)
-            .sort((a, b) => gamesOf(b.record) - gamesOf(a.record))
-            .slice(0, 500);
-    });
+            return [...records]
+                .map(([code, record]) => {
+                    const player = playerOf(code);
+                    return {
+                        userId: player?.u ?? '',
+                        name: player?.n ?? null,
+                        alias: playerNames[player?.u ?? ''] ?? null,
+                        record,
+                    };
+                })
+                .filter((o) => o.userId && o.userId !== userId)
+                .sort((a, b) => gamesOf(b.record) - gamesOf(a.record))
+                .slice(0, 500);
+        }),
+    );
 }
 

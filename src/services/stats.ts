@@ -9,6 +9,7 @@ import {
     unpackLoadout,
 } from '@/services/matchStore';
 import { getLiveSeason } from '@/services/seasons';
+import { HEAVY_QUERY_MAX_MS } from '@/utils/heavy';
 import { logger } from '@/utils/logger';
 import {
     currentMapId,
@@ -114,6 +115,7 @@ async function buildCube(
         const rows = await collection(seasonId)
             .aggregate<{ _id: { l: number; m: number; r: number }; n: number }>(pipeline, {
                 allowDiskUse: true,
+                maxTimeMS: HEAVY_QUERY_MAX_MS,
             })
             .toArray();
         for (const { _id, n } of rows) {
@@ -162,19 +164,22 @@ function seasonCube({
     return promise;
 }
 
-/** Cubes of several seasons, two aggregations at a time (free tier friendly). */
-async function cubesOf(seasons: StatsSeasonGroup[]) {
-    const out: CubeRow[][] = new Array(seasons.length);
+/** `work` on each item, two at a time (free tier friendly), results in order. */
+async function twoAtATime<T, R>(items: T[], work: (item: T) => Promise<R>): Promise<R[]> {
+    const out: R[] = new Array(items.length);
     let next = 0;
     const worker = async () => {
-        while (next < seasons.length) {
+        while (next < items.length) {
             const i = next++;
-            out[i] = await seasonCube(seasons[i]!);
+            out[i] = await work(items[i]!);
         }
     };
     await Promise.all([worker(), worker()]);
     return out;
 }
+
+/** Cubes of several seasons, two aggregations at a time. */
+const cubesOf = (seasons: StatsSeasonGroup[]) => twoAtATime(seasons, seasonCube);
 
 const tally = (map: Map<string, Wld>, key: string, i: WldIndex, n: number) => {
     const record = map.get(key) ?? [0, 0, 0];
@@ -460,7 +465,7 @@ async function buildOpponentCube(
                     { $match: match },
                     { $group: { _id: { l: side.theirs, m: mapExpr }, n: { $sum: 1 } } },
                 ],
-                { allowDiskUse: true },
+                { allowDiskUse: true, maxTimeMS: HEAVY_QUERY_MAX_MS },
             )
             .toArray();
         for (const { _id, n } of rows) {
@@ -491,8 +496,9 @@ export interface OpponentOptionsQuery {
 export async function opponentOptions(query: OpponentOptionsQuery) {
     await loadCodeBook();
     const known = knownHeroBases();
-    const cubes = await Promise.all(
-        query.seasons.map(async (g) => {
+    const cubes = await twoAtATime(
+        query.seasons,
+        async (g) => {
             const key = `${g.seasonId}:${g.groupKey}:own:${query.ownKey}`;
             const hit = opponentCubes.get(key);
             if (hit && hit.expires > Date.now()) return hit.rows;
@@ -504,7 +510,7 @@ export async function opponentOptions(query: OpponentOptionsQuery) {
                 expires: Date.now() + (live ? CUBE_TTL_MS.live : CUBE_TTL_MS.past),
             });
             return rows;
-        }),
+        },
     );
 
     const heroes = new Map<string, Map<string, number>>(); // base → raw hero → games

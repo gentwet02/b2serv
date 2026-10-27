@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono';
 import { MATCH_SORTS } from '@/config/constants';
 import { runCompare, runCompareGames } from '@/services/compare';
 import type { MatchSort } from '@/types/match';
+import { BUSY_MESSAGE, isOverloaded } from '@/utils/heavy';
 import { logger } from '@/utils/logger';
 import { parseLoadoutFilter, parseMapFocus, parseOverlap, parseSides } from '@/utils/params';
 
@@ -9,6 +10,12 @@ export const compare = new Hono();
 
 const fail = (c: Context, message: string, status: 400 | 404 | 500) =>
     c.json({ message, error: message }, status);
+
+/** Too much running (or a read that ran out of time): a 503 the client can retry. */
+const busy = (c: Context) => {
+    c.header('Retry-After', '10');
+    return c.json({ message: BUSY_MESSAGE, error: 'busy' }, 503);
+};
 
 /** At most this many games a page. */
 const GAMES_PAGE_MAX = 50;
@@ -50,6 +57,7 @@ compare.get('/', async (c) => {
         c.header('Cache-Control', 'public, max-age=60');
         return c.json(data);
     } catch (error) {
+        if (isOverloaded(error)) return busy(c);
         logger.error(`Compare failed (${c.req.url}): ${error}`);
         return fail(c, 'Could not compute the comparison.', 500);
     }
@@ -84,6 +92,7 @@ compare.get('/games', async (c) => {
         c.header('Cache-Control', 'public, max-age=60');
         return c.json(data);
     } catch (error) {
+        if (isOverloaded(error)) return busy(c);
         logger.error(`Compare games failed (${c.req.url}): ${error}`);
         return fail(c, 'Could not list the games.', 500);
     }

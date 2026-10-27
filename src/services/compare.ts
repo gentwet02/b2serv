@@ -25,7 +25,8 @@ import { seasonScope } from '@/services/ranges';
 import { describeSide, resolveSides, type FirstSide, type SideSpec } from '@/services/sides';
 import type { HeroPick, MatchSort, StoredMatchDoc } from '@/types/match';
 import type { CompareSeason, CompareSide } from '@/types/season';
-import { cached } from '@/utils/cache';
+import { cached, createCache } from '@/utils/cache';
+import { heavy, HEAVY_QUERY_MAX_MS } from '@/utils/heavy';
 import { heroBase, mapFits, type MapVariant } from '@/utils/matchLabels';
 
 /**
@@ -116,7 +117,15 @@ function sidesOf(doc: StoredMatchDoc, a: Map<number, unknown>, b: Map<number, un
     return out;
 }
 
-/** The games between two sets of player codes in a season (`b` null: anyone), streamed. */
+/** Past this many players on a side, its codes aren't sent to MongoDB (see eachGameBetween). */
+const BIG_SIDE = 300;
+
+/**
+ * The games of two sets of player codes in a season (`b` null: anyone), streamed. The caller
+ * keeps only the games between the sides (`sidesOf`): against a big side (a whole
+ * leaderboard), only the small side's games are read, on the index, and sorted out here,
+ * rather than an $in of thousands of codes MongoDB would walk the index for.
+ */
 async function eachGameBetween(
     seasonId: number,
     a: number[],
@@ -125,12 +134,16 @@ async function eachGameBetween(
 ) {
     if (a.length === 0 || b?.length === 0) return;
     const any = (codes: number[]) => (codes.length === 1 ? codes[0] : { $in: codes });
-    const cursor = collection(seasonId).find(
-        b
-            ? { $or: [{ a: any(a), b: any(b) }, { a: any(b), b: any(a) }] }
-            : { $or: [{ a: any(a) }, { b: any(a) }] },
-        { projection: { t: 1, a: 1, b: 1, x: 1, y: 1, d: 1 } },
-    );
+    const small = b && Math.max(a.length, b.length) > BIG_SIDE ? (a.length <= b.length ? a : b) : null;
+    const filter = small
+        ? { $or: [{ a: any(small) }, { b: any(small) }] }
+        : b
+          ? { $or: [{ a: any(a), b: any(b) }, { a: any(b), b: any(a) }] }
+          : { $or: [{ a: any(a) }, { b: any(a) }] };
+    const cursor = collection(seasonId).find(filter, {
+        projection: { t: 1, a: 1, b: 1, x: 1, y: 1, d: 1 },
+        maxTimeMS: HEAVY_QUERY_MAX_MS,
+    });
     for await (const doc of cursor) visit(doc as StoredMatchDoc);
 }
 
@@ -319,7 +332,7 @@ export async function runCompare(
     if (!sides) return null;
     const filter = isEmptyGameFilter(options.filter) ? undefined : options.filter;
     const data = await cached(`compare:${sides.cacheKey}:${optionsKey(options)}`, () =>
-        computeCompare(sides.groups, options.overlap, filter),
+        heavy(() => computeCompare(sides.groups, options.overlap, filter)),
     );
     return {
         ...data,
@@ -332,6 +345,9 @@ export async function runCompare(
         missingSeasons: sides.missing,
     };
 }
+
+/** Whole sorted game lists (a player's every game for "all seasons"): only a few kept. */
+const gamesCache = createCache({ max: 20 });
 
 /**
  * The games between the sides, sorted, one page. The sorted list is cached 5 minutes, so
@@ -347,8 +363,8 @@ export async function runCompareGames(
     if (!sides) return null;
     const { sort, offset, limit } = options;
     const filter = isEmptyGameFilter(options.filter) ? undefined : options.filter;
-    const all = await cached(`games:${sides.cacheKey}:${optionsKey(options)}:${sort}`, () =>
-        listGames(sides.groups, options.overlap, sort, filter),
+    const all = await gamesCache(`games:${sides.cacheKey}:${optionsKey(options)}:${sort}`, () =>
+        heavy(() => listGames(sides.groups, options.overlap, sort, filter)),
     );
     const items = await Promise.all(
         all.slice(offset, offset + limit).map(({ doc, seasonId }) => toApiMatch(doc, [], seasonId)),

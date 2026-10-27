@@ -6,6 +6,7 @@ import { seasonScope } from '@/services/ranges';
 import { describeSide, isAnyone, resolveSides, sideKey } from '@/services/sides';
 import { computeStats, opponentOptions, type StatsSeasonGroup } from '@/services/stats';
 import type { CompareSide } from '@/types/season';
+import { BUSY_MESSAGE, heavy, isOverloaded } from '@/utils/heavy';
 import { logger } from '@/utils/logger';
 import {
     parseLoadoutFilter,
@@ -74,43 +75,41 @@ stats.get('/', async (c) => {
     }
 
     try {
-        await loadCodeBook();
-        const sides = await resolveSides(seasonParam, a, b);
-        if (!sides) {
-            const message = 'Unknown season';
-            return c.json({ message, error: message }, 404);
-        }
+        const answer = await heavy(async () => {
+            await loadCodeBook();
+            const sides = await resolveSides(seasonParam, a, b);
+            if (!sides) return null;
 
-        // a loadout filter as conditions on either packed loadout; false: no game can fit it
-        const exprs = (f: LoadoutFilter) => {
-            const onX = loadoutExpr('$x', f);
-            const onY = loadoutExpr('$y', f);
-            return onX === false || onY === false ? false : { onX, onY };
-        };
-        const opponent = theirsSet ? exprs(theirs) : null;
-        const codesOf = (players: CompareSide['players']) =>
-            (players ?? [])
-                .map((p) => playerCodeOf(p.userId))
-                .filter((code): code is number => code !== undefined);
+            // a loadout filter as conditions on either packed loadout; false: no game can fit it
+            const exprs = (f: LoadoutFilter) => {
+                const onX = loadoutExpr('$x', f);
+                const onY = loadoutExpr('$y', f);
+                return onX === false || onY === false ? false : { onX, onY };
+            };
+            const opponent = theirsSet ? exprs(theirs) : null;
+            const codesOf = (players: CompareSide['players']) =>
+                (players ?? [])
+                    .map((p) => playerCodeOf(p.userId))
+                    .filter((code): code is number => code !== undefined);
 
-        const groups = sides.groups.map((season) => {
-            const codes = codesOf(season.a.players);
-            // side 2: a player in both ranges on both sides, or side 1's only
-            const mine = new Set(codes);
-            const against =
-                opponent === false
-                    ? []
-                    : season.b.players && codesOf(season.b.players).filter((code) => overlap || !mine.has(code));
-            return {
-                seasonId: season.seasonId,
-                name: season.name,
-                bounds: season.a.bounds ?? null,
-                boundsAgainst: season.b.bounds ?? null,
-                codes,
-                against,
-                opponent: opponent || null,
-                groupKey: `${sides.cacheKey}:${season.seasonId}:${overlap ? 'both' : 'first'}${theirsSet ? `|opp:${JSON.stringify(theirs)}` : ''}`,
-            } satisfies StatsSeasonGroup & Record<string, unknown>;
+            const groups = sides.groups.map((season) => {
+                const codes = codesOf(season.a.players);
+                // side 2: a player in both ranges on both sides, or side 1's only
+                const mine = new Set(codes);
+                const against =
+                    opponent === false
+                        ? []
+                        : season.b.players && codesOf(season.b.players).filter((code) => overlap || !mine.has(code));
+                return {
+                    seasonId: season.seasonId,
+                    name: season.name,
+                    bounds: season.a.bounds ?? null,
+                    boundsAgainst: season.b.bounds ?? null,
+                    codes,
+                    against,
+                    opponent: opponent || null,
+                    groupKey: `${sides.cacheKey}:${season.seasonId}:${overlap ? 'both' : 'first'}${theirsSet ? `|opp:${JSON.stringify(theirs)}` : ''}`,
+                } satisfies StatsSeasonGroup & Record<string, unknown>;
         });
 
         const data = await computeStats({ seasons: groups, map, exMaps, ...own });
@@ -168,11 +167,22 @@ stats.get('/', async (c) => {
             /** seasons whose leaderboard the server doesn't have yet (range sides) */
             missingSeasons: sides.missing,
         };
-        if (responses.size > 300) responses.clear();
+        if (responses.size >= 150) responses.clear();
         responses.set(cacheKey, { data: body, expires: Date.now() + RESPONSE_TTL_MS });
+        return body;
+        });
+        if (!answer) {
+            const message = 'Unknown season';
+            return c.json({ message, error: message }, 404);
+        }
         c.header('Cache-Control', 'public, max-age=60');
-        return c.json(body);
+        return c.json(answer);
     } catch (error) {
+        if (isOverloaded(error)) {
+            logger.warn(`Stats busy (${cacheKey}): ${error}`);
+            c.header('Retry-After', '10');
+            return c.json({ message: BUSY_MESSAGE, error: 'busy' }, 503);
+        }
         logger.error(`Stats failed (${cacheKey}): ${error}`);
         const message = 'Could not compute the stats.';
         return c.json({ message, error: message }, 500);

@@ -7,6 +7,7 @@ import { startMatchesScheduler } from '@/routes/matchesHistory';
 import { listProfileAssetUrls } from '@/services/profileStore';
 import { startProfileSweep } from '@/services/profileSweep';
 import { startSeasonsScheduler } from '@/services/seasons';
+import { env } from '@/config/environment';
 import { logger } from '@/utils/logger';
 import { learnAssetUrl } from '@/utils/assets';
 
@@ -32,4 +33,10 @@ await startSeasonsScheduler();
 
 logger.debug('Server ready!');
 
-export default app;
+export default {
+    port: env.PORT,
+    fetch: app.fetch,
+    // Bun's default is 10 s: a slower "all seasons" read was cut, then retried by the client,
+    // and the retry started the same heavy work again. Heavy reads give up well before this.
+    idleTimeout: 60,
+};

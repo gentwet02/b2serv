@@ -7,6 +7,7 @@ import { getLiveMatches } from '@/services/liveMatches';
 import { clanIdOf, getClan } from '@/services/clanStore';
 import { getProfileSeason, getStoredProfile } from '@/services/profileStore';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
+import { BUSY_MESSAGE, isOverloaded } from '@/utils/heavy';
 import { logger } from '@/utils/logger';
 import { fixAssetUrl, fixProfileAssets } from '@/utils/assets';
 import { extractUserId } from '@/utils/helpers';
@@ -207,6 +208,10 @@ users.get('/:id/compare', async (c) => {
             seasonName: season ? season.name : 'All seasons',
         });
     } catch (error) {
+        if (isOverloaded(error)) {
+            c.header('Retry-After', '10');
+            return c.json({ message: BUSY_MESSAGE, error: 'busy' }, 503);
+        }
         logger.error(`Head to head of ${id} failed: ${error}`);
         const message = 'Could not compute the head to head.';
         return c.json({ message, error: message }, 500);
@@ -230,6 +235,10 @@ users.get('/:id/opponents', async (c) => {
         c.header('Cache-Control', 'public, max-age=60');
         return c.json({ opponents });
     } catch (error) {
+        if (isOverloaded(error)) {
+            c.header('Retry-After', '10');
+            return c.json({ message: BUSY_MESSAGE, error: 'busy' }, 503);
+        }
         logger.error(`Opponents of ${id} failed: ${error}`);
         const message = 'Could not list the opponents.';
         return c.json({ message, error: message }, 500);
