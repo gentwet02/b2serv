@@ -118,6 +118,7 @@ function priorGames(entries: Wld[]): number {
  * overall rate (Bayesian average): (wins + K·p) / (wins + losses + K), K from `priorGames`.
  * With few games an entry stays near the average, so a 1–0 doesn't beat a 40–10; with many,
  * its own rate dominates. Draws don't count. At the same score, the one with more games first.
+ * A best needs at least one win, a worst at least one loss.
  */
 function extremes(entries: Map<string, Wld>, min: number, overall: Wld) {
     const K = priorGames([...entries.values()]);
@@ -130,13 +131,15 @@ function extremes(entries: Map<string, Wld>, min: number, overall: Wld) {
     if (ok.length === 0) return { best: null, worst: null };
     const byScore = (dir: 1 | -1) => (p: (typeof ok)[number], q: (typeof ok)[number]) =>
         dir * (q.score - p.score) || gamesOf(q.record) - gamesOf(p.record);
-    const best = [...ok].sort(byScore(1))[0];
-    const worst = [...ok].sort(byScore(-1))[0];
+    // a best needs a win and a worst a loss: never a 0% best or a 100% worst
+    const best = ok.filter((e) => e.record[0] > 0).sort(byScore(1))[0];
+    const worst = ok.filter((e) => e.record[1] > 0).sort(byScore(-1))[0];
+    const pick = (e: (typeof ok)[number] | undefined) =>
+        e ? ({ key: e.key, record: e.record } as H2hPick) : null;
     return {
-        best: { key: best.key, record: best.record } as H2hPick,
-        // one entry, or all at the same score: no worst
-        worst:
-            worst.score < best.score ? ({ key: worst.key, record: worst.record } as H2hPick) : null,
+        best: pick(best),
+        // the same entry, or all at the same score: no worst
+        worst: worst && (!best || worst.score < best.score) ? pick(worst) : null,
     };
 }
 
