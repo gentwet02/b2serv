@@ -58,7 +58,7 @@ export interface OpponentInput {
 
 /**
  * Games a map or loadout needs to be a best or a worst: any played one counts
- * (at the same win rate, the one with more games comes first).
+ * (few games are handled by the shrunk score of `extremes`).
  */
 export const H2H_MIN_GAMES = { opponent: 1, total: 1 } as const;
 
@@ -82,21 +82,61 @@ export function bump<K>(map: Map<K, Wld>, key: K, i: WldIndex) {
 }
 
 export const gamesOf = (r: Wld) => r[0] + r[1] + r[2];
-const rateOf = (r: Wld) => (r[0] + r[1] > 0 ? r[0] / (r[0] + r[1]) : null);
 
-/** Best and worst win rate among the entries played at least `min` times. */
-function extremes(entries: Map<string, Wld>, min: number) {
-    const ok = [...entries].filter(([, r]) => gamesOf(r) >= min && rateOf(r) !== null);
+/** Bounds of the prior strength K of `extremes`, in games. */
+export const H2H_PRIOR = { min: 5, share: 1 / 5, fallbackMax: 100 } as const;
+
+/**
+ * Prior strength K, in games, for a set of entries (empirical Bayes, beta-binomial moments):
+ * how much the entries' win rates really differ, once the luck of their sample sizes is removed.
+ * Entries that truly differ a lot → small K (trust each record); all about the same → large K
+ * (a hot streak on a few games is luck). Works from 1 game to millions: K is measured, not guessed.
+ * Kept between `min` and a fifth of the games; with under 3 entries there is no spread to
+ * measure, so a fifth of the games capped at `fallbackMax`.
+ */
+function priorGames(entries: Wld[]): number {
+    const decided = entries.map((r) => r[0] + r[1]).filter((n) => n > 0);
+    const games = decided.reduce((a, n) => a + n, 0);
+    const max = Math.max(H2H_PRIOR.min, games * H2H_PRIOR.share);
+    if (decided.length < 3) return Math.min(H2H_PRIOR.fallbackMax, max);
+    const wins = entries.reduce((a, r) => a + r[0], 0);
+    const mu = wins / games;
+    const bernoulli = mu * (1 - mu);
+    // spread of the observed rates, weighted by games, minus what the sample sizes alone explain
+    let spread = 0;
+    for (const r of entries) {
+        const n = r[0] + r[1];
+        if (n > 0) spread += n * (r[0] / n - mu) ** 2;
+    }
+    const trueSpread = spread / games - (bernoulli * decided.length) / games;
+    const K = trueSpread > 1e-9 ? bernoulli / trueSpread : max;
+    return Math.min(max, Math.max(H2H_PRIOR.min, K));
+}
+
+/**
+ * Best and worst among the entries played at least `min` times, by win rate shrunk toward the
+ * overall rate (Bayesian average): (wins + K·p) / (wins + losses + K), K from `priorGames`.
+ * With few games an entry stays near the average, so a 1–0 doesn't beat a 40–10; with many,
+ * its own rate dominates. Draws don't count. At the same score, the one with more games first.
+ */
+function extremes(entries: Map<string, Wld>, min: number, overall: Wld) {
+    const K = priorGames([...entries.values()]);
+    // overall rate, itself pulled a bit toward 50% so a 3–0 total doesn't pin every score at 100%
+    const prior = (overall[0] + 1) / (overall[0] + overall[1] + 2);
+    const scoreOf = (r: Wld) => (r[0] + K * prior) / (r[0] + r[1] + K);
+    const ok = [...entries]
+        .filter(([, r]) => gamesOf(r) >= min && r[0] + r[1] > 0)
+        .map(([key, record]) => ({ key, record, score: scoreOf(record) }));
     if (ok.length === 0) return { best: null, worst: null };
-    const byRate = (dir: 1 | -1) => (p: [string, Wld], q: [string, Wld]) =>
-        dir * (rateOf(q[1])! - rateOf(p[1])!) || gamesOf(q[1]) - gamesOf(p[1]);
-    const [bestKey, bestRecord] = [...ok].sort(byRate(1))[0];
-    const [worstKey, worstRecord] = [...ok].sort(byRate(-1))[0];
-    const worse = rateOf(worstRecord)! < rateOf(bestRecord)!;
+    const byScore = (dir: 1 | -1) => (p: (typeof ok)[number], q: (typeof ok)[number]) =>
+        dir * (q.score - p.score) || gamesOf(q.record) - gamesOf(p.record);
+    const best = [...ok].sort(byScore(1))[0];
+    const worst = [...ok].sort(byScore(-1))[0];
     return {
-        best: { key: bestKey, record: bestRecord } as H2hPick,
-        // one entry, or all at the same rate: no worst
-        worst: worse ? ({ key: worstKey, record: worstRecord } as H2hPick) : null,
+        best: { key: best.key, record: best.record } as H2hPick,
+        // one entry, or all at the same score: no worst
+        worst:
+            worst.score < best.score ? ({ key: worst.key, record: worst.record } as H2hPick) : null,
     };
 }
 
@@ -116,12 +156,12 @@ export const byGames = (entries: Map<string, Wld>, limit = Infinity): H2hPick[] 
         .slice(0, limit);
 
 export function summarize(tally: H2hTally, min: number) {
-    const maps = extremes(tally.maps, min);
-    const mine = extremes(tally.mine, min);
-    const theirs = extremes(tally.theirs, min);
-    const mapsV = extremes(tally.mapVariants, min);
-    const mineV = extremes(tally.mineVariants, min);
-    const theirsV = extremes(tally.theirsVariants, min);
+    const maps = extremes(tally.maps, min, tally.record);
+    const mine = extremes(tally.mine, min, tally.record);
+    const theirs = extremes(tally.theirs, min, tally.record);
+    const mapsV = extremes(tally.mapVariants, min, tally.record);
+    const mineV = extremes(tally.mineVariants, min, tally.record);
+    const theirsV = extremes(tally.theirsVariants, min, tally.record);
     return {
         record: tally.record,
         lastMet: tally.last ? new Date(tally.last * 60_000).toISOString() : null,
@@ -387,4 +427,3 @@ export function opponentsMet(userId: string, seasonIds: number[]) {
         }),
     );
 }
-
