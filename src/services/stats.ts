@@ -1,6 +1,6 @@
 import { CODE_BITS, loadCodeBook, nameOf } from '@/services/codeBook';
-import { getAssetUrl } from '@/services/matchMeta';
 import { RESULT_INDEX, type Wld, type WldIndex } from '@/services/h2h';
+import { getAssetUrl } from '@/services/matchMeta';
 import {
     collection,
     knownHeroBases,
@@ -168,12 +168,12 @@ function seasonCube({
 async function twoAtATime<T, R>(items: T[], work: (item: T) => Promise<R>): Promise<R[]> {
     const out: R[] = new Array(items.length);
     let next = 0;
-    const worker = async () => {
+    async function worker() {
         while (next < items.length) {
             const i = next++;
             out[i] = await work(items[i]!);
         }
-    };
+    }
     await Promise.all([worker(), worker()]);
     return out;
 }
@@ -181,19 +181,20 @@ async function twoAtATime<T, R>(items: T[], work: (item: T) => Promise<R>): Prom
 /** Cubes of several seasons, two aggregations at a time. */
 const cubesOf = (seasons: StatsSeasonGroup[]) => twoAtATime(seasons, seasonCube);
 
-const tally = (map: Map<string, Wld>, key: string, i: WldIndex, n: number) => {
+function tally(map: Map<string, Wld>, key: string, i: WldIndex, n: number) {
     const record = map.get(key) ?? [0, 0, 0];
     record[i] += n;
     map.set(key, record);
-};
+}
 const add = (map: Map<string, number>, key: string, n: number) =>
     map.set(key, (map.get(key) ?? 0) + n);
 const gamesOf = (r: Wld) => r[0] + r[1] + r[2];
-const rows = (map: Map<string, Wld>, limit = Infinity): StatsRow[] =>
-    [...map]
+function rows(map: Map<string, Wld>, limit = Infinity): StatsRow[] {
+    return [...map]
         .map(([key, record]) => ({ key, record }))
         .sort((a, b) => gamesOf(b.record) - gamesOf(a.record))
         .slice(0, limit);
+}
 interface DecodedLoadout {
     base: string;
     hero: string;
@@ -212,7 +213,7 @@ export async function computeStats(query: StatsQuery) {
     const { map, hero, towers, exHeroes, exTowers, exMaps } = query;
 
     const loadouts = new Map<number, DecodedLoadout>();
-    const decode = (code: number) => {
+    function decode(code: number) {
         let found = loadouts.get(code);
         if (!found) {
             const { hero, towers } = unpackLoadout(code);
@@ -229,14 +230,14 @@ export async function computeStats(query: StatsQuery) {
             loadouts.set(code, found);
         }
         return found;
-    };
+    }
     // a reversed map ("oasis_reversed") is a version of its base map ("oasis")
     const mapNames = new Map<string, Map<string, number>>(); // row key → raw id → games
     const mapKeys = new Map<
         number,
         { base: string; variant: MapVariant; split: string; raw: string; excluded: boolean }
     >();
-    const mapOf = (code: number) => {
+    function mapOf(code: number) {
         let found = mapKeys.get(code);
         if (found === undefined) {
             const raw = nameOf('map', code);
@@ -251,7 +252,7 @@ export async function computeStats(query: StatsQuery) {
             mapKeys.set(code, found);
         }
         return found;
-    };
+    }
     const heroVariants = new Map<string, Map<string, number>>(); // base → raw hero → games
 
     const group: Wld = [0, 0, 0]; // every game of the group (on the map)

@@ -81,16 +81,17 @@ stats.get('/', async (c) => {
             if (!sides) return null;
 
             // a loadout filter as conditions on either packed loadout; false: no game can fit it
-            const exprs = (f: LoadoutFilter) => {
+            function exprs(f: LoadoutFilter) {
                 const onX = loadoutExpr('$x', f);
                 const onY = loadoutExpr('$y', f);
                 return onX === false || onY === false ? false : { onX, onY };
-            };
+            }
             const opponent = theirsSet ? exprs(theirs) : null;
-            const codesOf = (players: CompareSide['players']) =>
-                (players ?? [])
+            function codesOf(players: CompareSide['players']) {
+                return (players ?? [])
                     .map((p) => playerCodeOf(p.userId))
                     .filter((code): code is number => code !== undefined);
+            }
 
             const groups = sides.groups.map((season) => {
                 const codes = codesOf(season.a.players);

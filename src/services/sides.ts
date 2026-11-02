@@ -27,12 +27,13 @@ export const isPlayer = (spec: SideSpec): spec is { player: string } => 'player'
 export const isAnyone = (spec: SideSpec): spec is { anyone: true } => 'anyone' in spec;
 
 /** "p:<id>", "anyone", "t50-t10": a side in cache keys. */
-export const sideKey = (spec: SideSpec) =>
-    isPlayer(spec)
+export function sideKey(spec: SideSpec) {
+    return isPlayer(spec)
         ? `p:${spec.player}`
         : isAnyone(spec)
           ? 'anyone'
           : `${spec.range}${spec.exclude ? `-${spec.exclude}` : ''}`;
+}
 
 /** A side for the client: its mode, the player's name, or the range. */
 export async function describeSide(spec: SideSpec) {
@@ -71,7 +72,7 @@ export async function resolveSides(seasonParam: string | undefined, a: FirstSide
 
     /** seasons whose leaderboard the server doesn't have yet (range sides) */
     const missing = new Set<number>();
-    const sideIn = (seasonId: number, spec: SideSpec, other: SideSpec): CompareSide => {
+    function sideIn(seasonId: number, spec: SideSpec, other: SideSpec): CompareSide {
         if (isPlayer(spec)) {
             return { players: [{ userId: spec.player, rank: getSeasonRank(seasonId, spec.player) }] };
         }
@@ -86,7 +87,7 @@ export async function resolveSides(seasonParam: string | undefined, a: FirstSide
             (p) => !isPlayer(other) || p.userId !== other.player,
         );
         return { bounds, players };
-    };
+    }
 
     const groups: CompareSeason[] = seasons.map((season) => ({
         seasonId: season.seasonId,

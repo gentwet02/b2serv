@@ -26,13 +26,15 @@ let pausedUntil = 0;
 let pumping = false;
 
 const stats = { requests: 0, rateLimited: 0, failed: 0, timedOut: 0 };
-export const getNkClientStats = () => ({
-    ...stats,
-    queuedHigh: lanes.high.length,
-    queuedLow: lanes.low.length,
-    pausedForMs: Math.max(0, pausedUntil - Date.now()),
-    requestsPerSecond: env.NK_REQUESTS_PER_SECOND,
-});
+export function getNkClientStats() {
+    return {
+        ...stats,
+        queuedHigh: lanes.high.length,
+        queuedLow: lanes.low.length,
+        pausedForMs: Math.max(0, pausedUntil - Date.now()),
+        requestsPerSecond: env.NK_REQUESTS_PER_SECOND,
+    };
+}
 
 async function pump() {
     if (pumping) return;

@@ -1,5 +1,5 @@
-import type { LeaderboardPlayer, LeaderboardPlayerEncoded } from '@/types/leaderboard';
 import { playerNames } from '@/data/playerNames';
+import type { LeaderboardPlayer, LeaderboardPlayerEncoded } from '@/types/leaderboard';
 import { extractUserId } from './helpers';
 
 export function encodePlayer(player: LeaderboardPlayer): LeaderboardPlayerEncoded {

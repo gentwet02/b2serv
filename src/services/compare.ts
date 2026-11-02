@@ -48,16 +48,22 @@ export interface GameFilter {
     theirs: LoadoutFilter;
 }
 
-export const isEmptyGameFilter = (f: GameFilter | undefined) =>
-    !f ||
-    (!f.map && f.exMaps.length === 0 && isEmptyLoadoutFilter(f.own) && isEmptyLoadoutFilter(f.theirs));
+export function isEmptyGameFilter(f: GameFilter | undefined) {
+    return (
+        !f ||
+        (!f.map &&
+            f.exMaps.length === 0 &&
+            isEmptyLoadoutFilter(f.own) &&
+            isEmptyLoadoutFilter(f.theirs))
+    );
+}
 
 /** The filter as plain checks on a stored game (decoded once per map and loadout). */
 function gameChecks(filter: GameFilter) {
     const known = knownHeroBases();
     const maps = new Map<string, boolean>(); // raw map name → fits
     const loadouts = [new Map<number, boolean>(), new Map<number, boolean>()];
-    const fits = (packed: number, f: LoadoutFilter) => {
+    function fits(packed: number, f: LoadoutFilter) {
         const { hero, towers } = unpackLoadout(packed);
         const base = heroBase(hero, known);
         const isHero = (h: HeroPick) => h.base === base && (!h.hero || h.hero === hero);
@@ -67,12 +73,12 @@ function gameChecks(filter: GameFilter) {
             f.towers.every((t) => towers.includes(t)) &&
             !f.exTowers.some((t) => towers.includes(t))
         );
-    };
-    const cachedFit = (cache: Map<number, boolean>, packed: number, f: LoadoutFilter) => {
+    }
+    function cachedFit(cache: Map<number, boolean>, packed: number, f: LoadoutFilter) {
         let ok = cache.get(packed);
         if (ok === undefined) cache.set(packed, (ok = fits(packed, f)));
         return ok;
-    };
+    }
     return {
         map(d: number) {
             const raw = unpackInfo(d).map;
@@ -92,14 +98,14 @@ function gameChecks(filter: GameFilter) {
 
 /** Each side's players as codes in a season (a range without the shared players, unless `overlap`). */
 function seasonCodes(season: CompareSeason, overlap: boolean) {
-    const codesOf = (players: CompareSide['players'], skip?: Set<number>) => {
+    function codesOf(players: CompareSide['players'], skip?: Set<number>) {
         const codes = new Map<number, string>(); // code → user id
         for (const p of players ?? []) {
             const code = playerCodeOf(p.userId);
             if (code !== undefined && !skip?.has(code)) codes.set(code, p.userId);
         }
         return codes;
-    };
+    }
     const a = codesOf(season.a.players);
     // side 2 null: anyone
     const b = season.b.players && codesOf(season.b.players, overlap ? undefined : new Set(a.keys()));
@@ -179,7 +185,7 @@ async function computeCompare(seasons: CompareSeason[], overlap: boolean, filter
     const members = { a: new Map<string, MemberTally>(), b: new Map<string, MemberTally>() };
 
     /** A player of a side this season (never-met players too, with a 0–0 record). */
-    const join = (side: Map<string, MemberTally>, p: { userId: string; rank: number | null; name?: string | undefined }) => {
+    function join(side: Map<string, MemberTally>, p: { userId: string; rank: number | null; name?: string | undefined }) {
         const entry = side.get(p.userId) ?? {
             userId: p.userId,
             name: nameOfUser(p.userId, p.name),
@@ -193,7 +199,7 @@ async function computeCompare(seasons: CompareSeason[], overlap: boolean, filter
             entry.bestRank = p.rank;
         }
         side.set(p.userId, entry);
-    };
+    }
 
     const perSeason = [];
     for (const season of seasons) {
@@ -248,8 +254,8 @@ async function computeCompare(seasons: CompareSeason[], overlap: boolean, filter
 
     const iso = (t: number) => (t ? new Date(t * 60_000).toISOString() : null);
     /** everyone on a side; never-met players have a 0–0 record */
-    const list = (side: Map<string, MemberTally>) =>
-        [...side.values()]
+    function list(side: Map<string, MemberTally>) {
+        return [...side.values()]
             .map((o) => ({
                 userId: o.userId,
                 name: o.name,
@@ -264,6 +270,7 @@ async function computeCompare(seasons: CompareSeason[], overlap: boolean, filter
                     gamesOf(y.record) - gamesOf(x.record) ||
                     (x.rank ?? Infinity) - (y.rank ?? Infinity),
             );
+    }
 
     return {
         minGames: H2H_MIN_GAMES,

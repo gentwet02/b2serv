@@ -172,11 +172,14 @@ async function reserve(counter: string, count: number): Promise<number> {
     return doc.c - count;
 }
 
-const isDuplicateKey = (error: unknown) =>
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code: number }).code === 11000;
+function isDuplicateKey(error: unknown) {
+    return (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        (error as { code: number }).code === 11000
+    );
+}
 
 /** Makes sure every name has a code. */
 export function ensureCodes(kind: CodeKind, names: Iterable<string>): Promise<void> {
@@ -240,10 +243,10 @@ export function ensurePlayers(
         seen.set(userId, names);
     }
 
-    const changed = (u: string) => {
+    function changed(u: string) {
         const player = playerOf(playerByUser.get(u)!);
         return !!player && seen.get(u)!.some((name) => isNewName(player, name));
-    };
+    }
     const missing = [...seen.keys()].filter((u) => !playerByUser.has(u));
     const known = [...seen.keys()].filter((u) => playerByUser.has(u) && changed(u));
     if (missing.length === 0 && known.length === 0) return Promise.resolve();
@@ -319,8 +322,10 @@ export const namesOf = (kind: CodeKind) => [...byName[kind].keys()];
 export const playerCodeOf = (userId: string) => playerByUser.get(userId);
 export const playerOf = (code: number) => playerByCode.get(code);
 
-const nameHit = (needle: string) => (name: string | undefined) =>
-    !!name && name.toLowerCase().includes(needle);
+function nameHit(needle: string) {
+    return (name: string | undefined) =>
+        !!name && name.toLowerCase().includes(needle);
+}
 
 /**
  * Players whose id, current name or alias contains `term`.

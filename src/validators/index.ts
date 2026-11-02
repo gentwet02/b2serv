@@ -1,6 +1,6 @@
+import { Schema } from 'mongoose';
 import { GAME_RESULT, GAME_TYPE } from '@/data/match';
 import { TOWERS } from '@/data/towers';
-import { Schema } from 'mongoose';
 
 export const ApiAssetUrl = {
     type: String,

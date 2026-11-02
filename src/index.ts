@@ -1,15 +1,15 @@
 import { Hono } from 'hono';
+import { env } from '@/config/environment';
 import CORS from '@/middleware/cors';
 import router from '@/router';
+import { startMatchesScheduler } from '@/routes/matchesHistory';
 import connectDB from '@/services/database';
 import { startLeaderboardScheduler } from '@/services/leaderboard';
-import { startMatchesScheduler } from '@/routes/matchesHistory';
 import { listProfileAssetUrls } from '@/services/profileStore';
 import { startProfileSweep } from '@/services/profileSweep';
 import { startSeasonsScheduler } from '@/services/seasons';
-import { env } from '@/config/environment';
-import { logger } from '@/utils/logger';
 import { learnAssetUrl } from '@/utils/assets';
+import { logger } from '@/utils/logger';
 
 const app = new Hono();
 

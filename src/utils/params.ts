@@ -9,8 +9,8 @@ import { parseMapFilter } from '@/utils/matchLabels';
 const NAME = /^[A-Za-z0-9_]{1,40}$/;
 
 /** "Druid,Ninja": valid names, each once, at most `max`. */
-export const nameList = (value: string | undefined, max: number) =>
-    [
+export function nameList(value: string | undefined, max: number) {
+    return [
         ...new Set(
             (value ?? '')
                 .split(',')
@@ -18,6 +18,7 @@ export const nameList = (value: string | undefined, max: number) =>
                 .filter((t) => NAME.test(t)),
         ),
     ].slice(0, max);
+}
 
 /** A comma list read item by item: the valid ones, one per base, at most `max`. */
 export function parsedList<T extends { base: string }>(
@@ -45,18 +46,22 @@ export function parseHero(value: string | undefined) {
 type Query = (name: string) => string | undefined;
 
 /** ?hero=&towers=&exHeroes=&exTowers= (suffix '2': the opponent's). */
-export const parseLoadoutFilter = (query: Query, suffix: '' | '2' = ''): LoadoutFilter => ({
-    hero: parseHero(query(`hero${suffix}`)),
-    towers: nameList(query(`towers${suffix}`), 3),
-    exHeroes: parsedList(query(`exHeroes${suffix}`), parseHero, MAX_EX_HEROES),
-    exTowers: nameList(query(`exTowers${suffix}`), MAX_EX_TOWERS),
-});
+export function parseLoadoutFilter(query: Query, suffix: '' | '2' = ''): LoadoutFilter {
+    return {
+        hero: parseHero(query(`hero${suffix}`)),
+        towers: nameList(query(`towers${suffix}`), 3),
+        exHeroes: parsedList(query(`exHeroes${suffix}`), parseHero, MAX_EX_HEROES),
+        exTowers: nameList(query(`exTowers${suffix}`), MAX_EX_TOWERS),
+    };
+}
 
 /** ?map=oasis | oasis:classic | oasis:reversed, &exMaps=oasis,dino:reversed */
-export const parseMapFocus = (query: Query) => ({
-    map: parseMapFilter(query('map')),
-    exMaps: parsedList(query('exMaps'), parseMapFilter, MAX_EX_MAPS),
-});
+export function parseMapFocus(query: Query) {
+    return {
+        map: parseMapFilter(query('map')),
+        exMaps: parsedList(query('exMaps'), parseMapFilter, MAX_EX_MAPS),
+    };
+}
 
 const USER_ID = /^[a-z0-9]{8,64}$/i;
 

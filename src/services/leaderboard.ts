@@ -1,12 +1,12 @@
 import { env } from '@/config/environment';
-import { fetchLeaderboard } from '@/services/ninjakiwi';
-import { getLiveSeason, getSeasons, type SeasonInfo } from '@/services/seasons';
 import {
     listFinalSeasonIds,
     loadAllStoredLeaderboards,
     loadStoredLeaderboard,
     storeLeaderboard,
 } from '@/services/leaderboardStore';
+import { fetchLeaderboard } from '@/services/ninjakiwi';
+import { getLiveSeason, getSeasons, type SeasonInfo } from '@/services/seasons';
 import type { LeaderboardPlayer, LeaderboardPlayerEncoded } from '@/types/leaderboard';
 import { encodePlayer } from '@/utils/encode';
 import { extractUserId, type Priority } from '@/utils/helpers';

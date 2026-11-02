@@ -1,9 +1,9 @@
 import { Environment } from '@/types/config';
 
-const num = (value: string | undefined, fallback: number) => {
+function num(value: string | undefined, fallback: number) {
     const parsed = Number(value);
     return value !== undefined && value !== '' && Number.isFinite(parsed) ? parsed : fallback;
-};
+}
 
 export const env: Environment = {
     NODE_ENV: (process.env.NODE_ENV as Environment['NODE_ENV']) || 'development',

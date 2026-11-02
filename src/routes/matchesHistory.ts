@@ -25,15 +25,15 @@ import { scheduleEvery } from '@/utils/scheduler';
 
 export const matchesHistory = new Hono();
 
-const clampInt = (value: string | undefined, fallback: number, min: number, max: number) => {
+function clampInt(value: string | undefined, fallback: number, min: number, max: number) {
     const n = Number.parseInt(value ?? '', 10);
     return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
-};
+}
 
 const NAME = /^[A-Za-z0-9_]{1,40}$/;
 
-const list = (value: string | undefined, max: number) =>
-    [
+function list(value: string | undefined, max: number) {
+    return [
         ...new Set(
             (value ?? '')
                 .split(',')
@@ -41,6 +41,7 @@ const list = (value: string | undefined, max: number) =>
                 .filter((v) => NAME.test(v)),
         ),
     ].slice(0, max);
+}
 
 function parseHeroes(value: string | undefined, max = MAX_HEROES): HeroPick[] {
     const picks: HeroPick[] = [];
@@ -58,8 +59,8 @@ function parseHeroes(value: string | undefined, max = MAX_HEROES): HeroPick[] {
 const cleanMap = (value: string | undefined) =>
     value?.replace(/[^a-z0-9:]/g, '').slice(0, 60) || undefined;
 
-const mapList = (value: string | undefined, max: number) =>
-    [
+function mapList(value: string | undefined, max: number) {
+    return [
         ...new Set(
             (value ?? '')
                 .split(',')
@@ -67,13 +68,16 @@ const mapList = (value: string | undefined, max: number) =>
                 .filter((m): m is string => !!m),
         ),
     ].slice(0, max);
+}
 
-const crawlInfo = () => ({
-    isFetching: crawlState.isFetching,
-    progress: crawlState.isFetching ? crawlState.progress : null,
-    inserted: crawlState.inserted,
-    lastRunEndedAt: crawlState.lastRunEndedAt?.toISOString() ?? null,
-});
+function crawlInfo() {
+    return {
+        isFetching: crawlState.isFetching,
+        progress: crawlState.isFetching ? crawlState.progress : null,
+        inserted: crawlState.inserted,
+        lastRunEndedAt: crawlState.lastRunEndedAt?.toISOString() ?? null,
+    };
+}
 
 /** `season=all`: every stored season. */
 const ALL = { seasonId: null, live: true } as const;

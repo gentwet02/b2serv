@@ -1,4 +1,3 @@
-import { env } from '@/config/environment';
 import {
     CRAWL_CONCURRENCY,
     CRAWL_RETRY_PASSES,
@@ -6,16 +5,17 @@ import {
     MAX_UNSAVED,
     STORE_ATTEMPTS,
 } from '@/config/constants';
+import { env } from '@/config/environment';
 import { getCachedLeaderboard, getLeaderboardPlayers } from '@/services/leaderboard';
 import { rememberMatchAssets } from '@/services/matchMeta';
 import { findStoredIds, hasStoredMatches, saveCrawledMatches } from '@/services/matchStore';
 import { processPlayersMatches } from '@/services/ninjakiwi';
 import { getLiveSeason } from '@/services/seasons';
+import { LeaderboardPlayer } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
 import type { CrawlProgress } from '@/types/ninjakiwi';
-import { logger } from '@/utils/logger';
 import { delay, extractUserId } from '@/utils/helpers';
-import { LeaderboardPlayer } from '@/types/leaderboard';
+import { logger } from '@/utils/logger';
 
 /**
  * The crawler only feeds the database: every HoM player's recent matches are read from NK
@@ -70,9 +70,12 @@ function hallOfMasters(seasonId: number): Set<string> | null {
     return homIndex.ids;
 }
 
-const bothInHoM = (match: Match, hom: Set<string>) =>
-    hom.has(extractUserId(match.playerLeft.profileURL)) &&
-    hom.has(extractUserId(match.playerRight.profileURL));
+function bothInHoM(match: Match, hom: Set<string>) {
+    return (
+        hom.has(extractUserId(match.playerLeft.profileURL)) &&
+        hom.has(extractUserId(match.playerRight.profileURL))
+    );
+}
 
 /** Players NK did not answer for, by season: read first on the next run. */
 const pendingPlayers = new Map<number, Set<string>>();
@@ -174,7 +177,7 @@ export async function refreshMatchesHistory(): Promise<void> {
     // the roster read at the start of the run, if the cache were ever missing
     let startRoster = new Set<string>();
 
-    const flush = (found: Map<string, Match>) => {
+    function flush(found: Map<string, Match>) {
         // read the flags now, after the matches: picks up leaderboard refreshes during the crawl
         const hom = hallOfMasters(seasonId) ?? startRoster;
         const batch: Match[] = [];
@@ -194,12 +197,12 @@ export async function refreshMatchesHistory(): Promise<void> {
                 logger.error(`Storing a match batch failed: ${error}`);
                 keepUnsaved(batch, seasonId);
             });
-    };
+    }
 
     const isStored = (ids: string[]) => findStoredIds(ids, seasonId);
     const hasHistory = (userId: string) => hasStoredMatches(userId, seasonId);
 
-    const runPass = async (userIds: string[]) => {
+    async function runPass(userIds: string[]) {
         crawlState.progress = { done: 0, total: userIds.length };
         const result = await processPlayersMatches(userIds, {
             isStored,
@@ -219,7 +222,7 @@ export async function refreshMatchesHistory(): Promise<void> {
             );
         }
         return result.failed;
-    };
+    }
 
     try {
         await retryUnsaved();

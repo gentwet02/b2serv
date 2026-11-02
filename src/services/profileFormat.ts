@@ -109,12 +109,12 @@ const guildKey = (url: string) =>
 /** Every name a profile needs a code for, by kind. */
 export function profileNames(body: NkProfileBody): Map<ProfileCodeKind, Set<string>> {
     const names = new Map<ProfileCodeKind, Set<string>>();
-    const add = (kind: ProfileCodeKind, name: string | undefined) => {
+    function add(kind: ProfileCodeKind, name: string | undefined) {
         if (!name) return;
         const set = names.get(kind) ?? new Set<string>();
         set.add(name);
         names.set(kind, set);
-    };
+    }
     const avatar = str(body.equippedAvatarURL);
     const banner = str(body.equippedBannerURL);
     const border = str(body.equippedBorderURL);
@@ -174,7 +174,7 @@ export function encodeCurrent(body: NkProfileBody, codec: Codec) {
     ];
 
     /** [season + 1, badge code, …] */
-    const badgeCodes = (items: unknown[] | undefined) => {
+    function badgeCodes(items: unknown[] | undefined) {
         const out: number[] = [];
         for (const item of items ?? []) {
             const badge = readBadge(item);
@@ -185,7 +185,7 @@ export function encodeCurrent(body: NkProfileBody, codec: Codec) {
                 );
         }
         return out;
-    };
+    }
     const g = badgeCodes(body.badges_equipped);
     const ga = badgeCodes(body.badges_all);
 
@@ -401,11 +401,11 @@ function decodeBadges(g: number[] | undefined, codec: Codec) {
 }
 
 function decodeEquipped(e: number[], g: number[] | undefined, codec: Codec) {
-    const asset = (kind: ProfileCodeKind, code: number | undefined) => {
+    function asset(kind: ProfileCodeKind, code: number | undefined) {
         if (code === undefined || code < 0) return null;
         const key = codec.name(kind, code);
         return key ? { key, url: assetUrl(key), name: assetName(key) } : null;
-    };
+    }
     const titleCode = e[3];
     const badges = decodeBadges(g, codec);
     return {
@@ -420,15 +420,17 @@ function decodeEquipped(e: number[], g: number[] | undefined, codec: Codec) {
     };
 }
 
-const statsOf = (s: number[]): NkStats => ({
-    wins: s[0] ?? 0,
-    draws: s[1] ?? 0,
-    losses: s[2] ?? 0,
-    win_streak: s[3] ?? 0,
-    highest_win_streak: s[4] ?? 0,
-    no_lives_lost: s[5] ?? 0,
-    first_bloons: s[6] ?? 0,
-});
+function statsOf(s: number[]): NkStats {
+    return {
+        wins: s[0] ?? 0,
+        draws: s[1] ?? 0,
+        losses: s[2] ?? 0,
+        win_streak: s[3] ?? 0,
+        highest_win_streak: s[4] ?? 0,
+        no_lives_lost: s[5] ?? 0,
+        first_bloons: s[6] ?? 0,
+    };
+}
 
 /** The season records of a document, newest first. */
 export function decodeSeasons(doc: ProfileDoc, codec: Codec): ProfileSeason[] {

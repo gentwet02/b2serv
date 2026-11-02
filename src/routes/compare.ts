@@ -12,10 +12,10 @@ const fail = (c: Context, message: string, status: 400 | 404 | 500) =>
     c.json({ message, error: message }, status);
 
 /** Too much running (or a read that ran out of time): a 503 the client can retry. */
-const busy = (c: Context) => {
+function busy(c: Context) {
     c.header('Retry-After', '10');
     return c.json({ message: BUSY_MESSAGE, error: 'busy' }, 503);
-};
+}
 
 /** At most this many games a page. */
 const GAMES_PAGE_MAX = 50;

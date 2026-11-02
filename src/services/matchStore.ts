@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { playerNames } from '@/data/playerNames';
+import { HERO_BASES } from '@/data/towers';
 import {
     CODE_BITS,
     codeOf,
@@ -26,8 +27,8 @@ import type {
     SideOptions,
     StoredMatchDoc,
 } from '@/types/match';
-import { extractUserId } from '@/utils/helpers';
 import { cached } from '@/utils/cache';
+import { extractUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 import {
     heroBase,
@@ -38,7 +39,6 @@ import {
     parseMapFilter,
     type MapVariant,
 } from '@/utils/matchLabels';
-import { HERO_BASES } from '@/data/towers';
 
 /**
  * Compact match storage: one collection per season, `matches_s<season>`, 6 small numbers per match.
@@ -139,25 +139,31 @@ function packInfo(match: Match): number | null {
     return result + map * 2 ** D.map + round * 2 ** D.round + duration * 2 ** D.duration;
 }
 
-export const unpackLoadout = (x: number) => ({
-    hero: nameOf('hero', x % 2 ** CODE_BITS.hero),
-    towers: [X.t1, X.t2, X.t3].map((shift) =>
-        nameOf('tower', Math.floor(x / 2 ** shift) % 2 ** CODE_BITS.tower),
-    ),
-});
+export function unpackLoadout(x: number) {
+    return {
+        hero: nameOf('hero', x % 2 ** CODE_BITS.hero),
+        towers: [X.t1, X.t2, X.t3].map((shift) =>
+            nameOf('tower', Math.floor(x / 2 ** shift) % 2 ** CODE_BITS.tower),
+        ),
+    };
+}
 
 /** A packed game's result, map, last round and duration. */
-export const unpackInfo = (d: number) => ({
-    result: nameOf('result', d % 2 ** CODE_BITS.result),
-    map: nameOf('map', Math.floor(d / 2 ** D.map) % 2 ** CODE_BITS.map),
-    endRound: Math.floor(d / 2 ** D.round) % 2 ** ROUND_BITS,
-    duration: Math.floor(d / 2 ** D.duration),
-});
+export function unpackInfo(d: number) {
+    return {
+        result: nameOf('result', d % 2 ** CODE_BITS.result),
+        map: nameOf('map', Math.floor(d / 2 ** D.map) % 2 ** CODE_BITS.map),
+        endRound: Math.floor(d / 2 ** D.round) % 2 ** ROUND_BITS,
+        duration: Math.floor(d / 2 ** D.duration),
+    };
+}
 
 // the same unpacking as MongoDB expressions
-const bitsOf = (field: string, shift: number, bits: number) => ({
-    $mod: [shift ? { $floor: { $divide: [field, 2 ** shift] } } : field, 2 ** bits],
-});
+function bitsOf(field: string, shift: number, bits: number) {
+    return {
+        $mod: [shift ? { $floor: { $divide: [field, 2 ** shift] } } : field, 2 ** bits],
+    };
+}
 const SIDES = {
     left: { player: '$a', loadout: '$x' },
     right: { player: '$b', loadout: '$y' },
@@ -318,12 +324,12 @@ export function knownHeroBases() {
     return new Set<string>([...HERO_BASES, ...namesOf('hero').filter((h) => !h.includes('_'))]);
 }
 
-const heroCodesFor = (pick: HeroPick) => {
+function heroCodesFor(pick: HeroPick) {
     const names = pick.hero
         ? [pick.hero]
         : namesOf('hero').filter((name) => heroBase(name, knownHeroBases()) === pick.base);
     return names.map((n) => codeOf('hero', n)).filter((c): c is number => c !== undefined);
-};
+}
 
 const isCode = (code: number | undefined): code is number => code !== undefined;
 
@@ -342,9 +348,11 @@ function mapCodesFor(value: string) {
 }
 
 /** None of `codes` is among `values` (unpacked heroes or towers). */
-const noneOf = (codes: number[], values: object[]) => ({
-    $eq: [{ $size: { $setIntersection: [codes, values] } }, 0],
-});
+function noneOf(codes: number[], values: object[]) {
+    return {
+        $eq: [{ $size: { $setIntersection: [codes, values] } }, 0],
+    };
+}
 
 /** Player codes for a name part and/or an exact id. null: no player filter, []: nobody. */
 function resolvePlayers(name?: string, id?: string, allNames = false): number[] | null {
@@ -610,7 +618,7 @@ async function sideOptions(
 
     // heroes: selected bases use their relaxed counts, the others the full ones
     const byBase = new Map<string, SideOptions['heroes'][number]>();
-    const addHeroes = (counts: Count[], keep: (base: string) => boolean) => {
+    function addHeroes(counts: Count[], keep: (base: string) => boolean) {
         for (const { _id, n } of counts) {
             const hero = nameOf('hero', _id);
             const base = heroBase(hero, known);
@@ -620,7 +628,7 @@ async function sideOptions(
             entry.variants.push({ hero, count: n });
             byBase.set(base, entry);
         }
-    };
+    }
     addHeroes(heroCounts, (base) => !selected.some(({ pick }) => pick.base === base && pick.hero));
     selected.forEach(({ pick }, i) => {
         const counts = relaxedHeroCounts[i];
@@ -658,8 +666,8 @@ export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptio
     // maps are counted without the map filters: excluded maps keep their name, image and count
     const withoutMap = buildQuery({ ...filter, map: undefined, exMaps: [] });
     // a selected hero with a chosen variant: count its variants as if "any variant"
-    const selectedOf = (key: 'heroes' | 'heroes2'): SelectedHero[] =>
-        filter[key].map((pick, i) => {
+    function selectedOf(key: 'heroes' | 'heroes2'): SelectedHero[] {
+        return filter[key].map((pick, i) => {
             if (!pick.hero) return { pick, relaxed: full };
             const picks = filter[key].map((p, j) => (j === i ? { base: p.base } : p));
             return {
@@ -669,6 +677,7 @@ export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptio
                 ),
             };
         });
+    }
 
     const [mapCounts, sides] = await Promise.all([
         countBy(seasonIds, withoutMap, [mapExpr]),
@@ -760,12 +769,14 @@ export async function queryMatches(filter: MatchesFilter) {
     if (filtered) pre.push({ $match: match });
     if (filter.sort === 'rounds') pre.push({ $addFields: { _round: roundExpr } });
 
-    const branch = (seasonId: number) => [
-        ...pre,
-        sort,
-        { $limit: filter.offset + filter.limit },
-        { $addFields: { s: seasonId } },
-    ];
+    function branch(seasonId: number) {
+        return [
+            ...pre,
+            sort,
+            { $limit: filter.offset + filter.limit },
+            { $addFields: { s: seasonId } },
+        ];
+    }
     const [first, ...others] = seasonIds;
     const pipeline: object[] =
         others.length === 0
@@ -780,10 +791,11 @@ export async function queryMatches(filter: MatchesFilter) {
                   { $limit: filter.limit },
               ];
 
-    const count = (id: number) =>
-        filtered
+    function count(id: number) {
+        return filtered
             ? collection(id).countDocuments(match)
             : collection(id).estimatedDocumentCount();
+    }
 
     const started = Date.now();
     const [docs, counts] = await Promise.all([

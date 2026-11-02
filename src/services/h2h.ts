@@ -64,16 +64,18 @@ export const H2H_MIN_GAMES = { opponent: 1, total: 1 } as const;
 
 export const RESULT_INDEX: Record<string, WldIndex> = { win: 0, lose: 1, draw: 2 };
 
-export const newH2hTally = (): H2hTally => ({
-    record: [0, 0, 0],
-    maps: new Map(),
-    mapVariants: new Map(),
-    mine: new Map(),
-    theirs: new Map(),
-    mineVariants: new Map(),
-    theirsVariants: new Map(),
-    last: 0,
-});
+export function newH2hTally(): H2hTally {
+    return {
+        record: [0, 0, 0],
+        maps: new Map(),
+        mapVariants: new Map(),
+        mine: new Map(),
+        theirs: new Map(),
+        mineVariants: new Map(),
+        theirsVariants: new Map(),
+        last: 0,
+    };
+}
 
 export function bump<K>(map: Map<K, Wld>, key: K, i: WldIndex) {
     const record = map.get(key) ?? [0, 0, 0];
@@ -129,8 +131,10 @@ function extremes(entries: Map<string, Wld>, min: number, overall: Wld) {
         .filter(([, r]) => gamesOf(r) >= min && r[0] + r[1] > 0)
         .map(([key, record]) => ({ key, record, score: scoreOf(record) }));
     if (ok.length === 0) return { best: null, worst: null };
-    const byScore = (dir: 1 | -1) => (p: (typeof ok)[number], q: (typeof ok)[number]) =>
-        dir * (q.score - p.score) || gamesOf(q.record) - gamesOf(p.record);
+    function byScore(dir: 1 | -1) {
+        return (p: (typeof ok)[number], q: (typeof ok)[number]) =>
+            dir * (q.score - p.score) || gamesOf(q.record) - gamesOf(p.record);
+    }
     // a best needs a win and a worst a loss: never a 0% best or a 100% worst
     const best = ok.filter((e) => e.record[0] > 0).sort(byScore(1))[0];
     const worst = ok.filter((e) => e.record[1] > 0).sort(byScore(-1))[0];
@@ -152,11 +156,12 @@ function mostPlayed(entries: Map<string, Wld>): H2hPick | null {
 }
 
 /** Entries as a list, most played first. */
-export const byGames = (entries: Map<string, Wld>, limit = Infinity): H2hPick[] =>
-    [...entries]
+export function byGames(entries: Map<string, Wld>, limit = Infinity): H2hPick[] {
+    return [...entries]
         .map(([key, record]) => ({ key, record }))
         .sort((a, b) => gamesOf(b.record) - gamesOf(a.record))
         .slice(0, limit);
+}
 
 export function summarize(tally: H2hTally, min: number) {
     const maps = extremes(tally.maps, min, tally.record);
@@ -193,14 +198,14 @@ export function labeler() {
     const heroVariants = new Map<string, string>(); // base → a raw NK id
     const rawHeroes = new Map<string, string>(); // raw NK id → base
 
-    const baseOf = (hero: string) => {
+    function baseOf(hero: string) {
         let base = bases.get(hero);
         if (base === undefined) {
             base = heroBase(hero, known);
             bases.set(hero, base);
         }
         return base;
-    };
+    }
 
     return {
         /** "oasis" (both versions together), and apart: "oasis" or "oasis:reversed" (as the stats) */
@@ -316,10 +321,10 @@ async function gamesAgainst(seasonId: number, me: number, codes: number[]) {
         .toArray();
 }
 
-export const nameOfUser = (userId: string, fallback?: string) => {
+export function nameOfUser(userId: string, fallback?: string) {
     const code = playerCodeOf(userId);
     return (code !== undefined ? playerOf(code)?.n : undefined) ?? fallback ?? null;
-};
+}
 
 // ---------- Profile card: 10 opponents, one row each ----------
 

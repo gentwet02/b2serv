@@ -42,13 +42,14 @@ const profileUrl = (userId: string) => `https://data.ninjakiwi.com/battles2/user
 const collection = () => mongoose.connection.collection<LeaderboardDoc>(COLLECTIONS.LEADERBOARDS);
 
 let indexed: Promise<unknown> | null = null;
-const ensureIndex = () =>
-    (indexed ??= collection()
+function ensureIndex() {
+    return (indexed ??= collection()
         .createIndex({ seasonId: 1 }, { unique: true })
         .catch((error) => {
             indexed = null;
             logger.error(`Creating the leaderboards index failed: ${error}`);
         }));
+}
 
 function bytes(bin: mongoose.mongo.Binary): Buffer {
     const view = bin.buffer.subarray(0, bin.length());

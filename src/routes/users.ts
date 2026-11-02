@@ -1,17 +1,17 @@
 import { Hono, type Context } from 'hono';
 import { getConnInfo } from 'hono/bun';
-import { readLeaderboard, getRankHistory } from '@/services/leaderboard';
-import { getPlayerSeasonRecords, getSeasonStats } from '@/services/matchStore';
-import { headToHead, opponentsMet, type OpponentInput } from '@/services/h2h';
-import { getLiveMatches } from '@/services/liveMatches';
 import { clanIdOf, getClan } from '@/services/clanStore';
+import { headToHead, opponentsMet, type OpponentInput } from '@/services/h2h';
+import { readLeaderboard, getRankHistory } from '@/services/leaderboard';
+import { getLiveMatches } from '@/services/liveMatches';
+import { getPlayerSeasonRecords, getSeasonStats } from '@/services/matchStore';
 import { getProfileSeason, getStoredProfile } from '@/services/profileStore';
-import { getLiveSeason, getSeasonById } from '@/services/seasons';
-import { BUSY_MESSAGE, isOverloaded } from '@/utils/heavy';
-import { logger } from '@/utils/logger';
-import { fixAssetUrl, fixProfileAssets } from '@/utils/assets';
-import { extractUserId } from '@/utils/helpers';
 import { resolveSeasons } from '@/services/ranges';
+import { getLiveSeason, getSeasonById } from '@/services/seasons';
+import { fixAssetUrl, fixProfileAssets } from '@/utils/assets';
+import { BUSY_MESSAGE, isOverloaded } from '@/utils/heavy';
+import { extractUserId } from '@/utils/helpers';
+import { logger } from '@/utils/logger';
 
 /**
  * Player data for the client, from the database (background jobs keep it up to date).
@@ -29,10 +29,10 @@ export const users = new Hono();
 
 const USER_ID = /^[a-z0-9]{8,64}$/i;
 
-const invalid = (c: Context) => {
+function invalid(c: Context) {
     const message = 'Invalid user id';
     return c.json({ message, error: message }, 400);
-};
+}
 
 /** The visitor's address: the proxy's header when there is one, else the connection. */
 function clientIp(c: Context) {
@@ -184,11 +184,13 @@ users.get('/:id/compare', async (c) => {
                 { rank: i + 1, name: p.displayName },
             ]),
         );
-        const input = (userId: string): OpponentInput => ({
-            userId,
-            rank: board.get(userId)?.rank ?? null,
-            name: board.get(userId)?.name,
-        });
+        function input(userId: string): OpponentInput {
+            return {
+                userId,
+                rank: board.get(userId)?.rank ?? null,
+                name: board.get(userId)?.name,
+            };
+        }
 
         let opponents = picked;
         if (opponents.length === 0) {

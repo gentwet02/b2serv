@@ -1,5 +1,5 @@
-import { env } from '@/config/environment';
 import { NK_API } from '@/config/constants';
+import { env } from '@/config/environment';
 import { clanIdOf, refreshClans } from '@/services/clanStore';
 import { ensureLeaderboard, getLeaderboardPlayers } from '@/services/leaderboard';
 import { lastReadTimes, storeReadings, type ProfileReading } from '@/services/profileStore';
@@ -81,7 +81,7 @@ export async function sweepProfiles(): Promise<void> {
 
     let pending: ProfileReading[] = [];
     let writing: Promise<void> = Promise.resolve();
-    const flush = () => {
+    function flush() {
         if (pending.length === 0) return;
         const batch = pending;
         pending = [];
@@ -105,7 +105,7 @@ export async function sweepProfiles(): Promise<void> {
                 logger.error(`Clan refresh failed: ${error}`);
             }
         });
-    };
+    }
 
     try {
         const ids = await playersToRead();
@@ -115,7 +115,7 @@ export async function sweepProfiles(): Promise<void> {
         sweepState.total = ids.length;
 
         let index = 0;
-        const worker = async () => {
+        async function worker() {
             while (index < ids.length) {
                 const userId = ids[index++]!;
                 const data = await fetchWithRetry<NkProfileAnswer>(NK_API.PLAYER_PROFILE(userId), {
@@ -144,7 +144,7 @@ export async function sweepProfiles(): Promise<void> {
                 });
                 if (pending.length >= BATCH) flush();
             }
-        };
+        }
         await Promise.all(Array.from({ length: CONCURRENCY }, worker));
         flush();
         await writing;

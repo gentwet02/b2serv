@@ -4,13 +4,13 @@ import {
     MAX_LEADERBOARD_PAGES,
     PLAYER_FETCH_CONCURRENCY,
 } from '@/config/constants';
-import { fetchWithRetry, type Priority } from '@/utils/helpers';
-import { logger } from '@/utils/logger';
 import type { LeaderboardPlayer, LeadrboardResponse } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
 import type { CrawlOptions, CrawlResult, HistoryOptions, PlayerHistory } from '@/types/ninjakiwi';
 import type { PlayerMatchesResponse } from '@/types/player';
 import type { Season, SeasonsResponse } from '@/types/season';
+import { fetchWithRetry, type Priority } from '@/utils/helpers';
+import { logger } from '@/utils/logger';
 
 function nextPageUrl(next: unknown): string | null {
     return typeof next === 'string' && next.length > 0 ? next : null;

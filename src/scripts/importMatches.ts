@@ -111,9 +111,9 @@ const newCodes: Record<MatchCodeKind, Set<string>> = {
 const newPlayers = new Set<string>();
 
 function previewCodes(match: Match) {
-    const add = (kind: MatchCodeKind, name: string) => {
+    function add(kind: MatchCodeKind, name: string) {
         if (name && codeOf(kind, name) === undefined) newCodes[kind].add(name);
-    };
+    }
     add('map', match.map);
     add('result', match.playerLeft.result);
     for (const p of [match.playerLeft, match.playerRight]) {

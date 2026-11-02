@@ -2,9 +2,9 @@ import { Hono } from 'hono';
 import { readLeaderboard } from '@/services/leaderboard';
 import { getSeasonRecords } from '@/services/matchStore';
 import { getKnownAvatars } from '@/services/playerData';
+import { getLiveSeason, getSeasonById, type SeasonInfo } from '@/services/seasons';
 import { extractUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
-import { getLiveSeason, getSeasonById, type SeasonInfo } from '@/services/seasons';
 
 export const leaderboard = new Hono();
 

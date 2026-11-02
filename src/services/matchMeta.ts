@@ -49,11 +49,11 @@ export async function getAssetUrl(kind: AssetDoc['kind'], key: string) {
 export async function rememberMatchAssets(matches: Match[]) {
     await loadAssets();
     const fresh: AssetDoc[] = [];
-    const add = (kind: AssetDoc['kind'], key: string, url?: string) => {
+    function add(kind: AssetDoc['kind'], key: string, url?: string) {
         if (!key || !url || assets.get(`${kind}:${key}`) === url) return;
         assets.set(`${kind}:${key}`, url);
         fresh.push({ kind, key, url });
-    };
+    }
 
     for (const match of matches) {
         add('map', match.map, match.mapURL);

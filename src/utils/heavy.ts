@@ -32,10 +32,10 @@ export async function heavy<T>(work: () => Promise<T>): Promise<T> {
         }
         // the slot is handed over by the read that ends: `running` doesn't change
         await new Promise<void>((resolve, reject) => {
-            const turn = () => {
+            function turn() {
                 clearTimeout(timer);
                 resolve();
-            };
+            }
             const timer = setTimeout(() => {
                 const i = waiting.indexOf(turn);
                 if (i >= 0) waiting.splice(i, 1);

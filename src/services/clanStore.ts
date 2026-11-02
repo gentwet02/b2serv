@@ -126,7 +126,7 @@ export async function refreshClans(ids: Iterable<string>): Promise<{ read: numbe
     const docs: ClanDoc[] = [];
     let failed = 0;
     let index = 0;
-    const worker = async () => {
+    async function worker() {
         while (index < stale.length) {
             const id = stale[index++]!;
             const data = await fetchWithRetry<{ success?: boolean; body?: NkGuildBody }>(
@@ -151,7 +151,7 @@ export async function refreshClans(ids: Iterable<string>): Promise<{ read: numbe
             if (owner) doc.o = owner;
             docs.push(doc);
         }
-    };
+    }
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
     if (docs.length > 0) {

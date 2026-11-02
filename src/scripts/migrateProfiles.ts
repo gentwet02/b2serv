@@ -30,14 +30,14 @@ if (seasons.length === 0) {
 await connectDB();
 const db = mongoose.connection.db!;
 const old = db.collection<{ _id: string; data?: { body?: NkProfileBody }; fetchedAt?: Date }>(OLD);
-const size = async (name: string) => {
+async function size(name: string) {
     try {
         const stats = await db.command({ collStats: name });
         return `${(stats.size / 1024).toFixed(0)} KB (${stats.count} docs)`;
     } catch {
         return '-';
     }
-};
+}
 
 console.log(
     `Before: ${OLD} ${await size(OLD)}, ${PROFILES_COLLECTION} ${await size(PROFILES_COLLECTION)}`,
@@ -47,10 +47,10 @@ let readings: ProfileReading[] = [];
 const counts = { read: 0, stored: 0, skipped: 0 };
 const perSeason = new Map<string, number>();
 
-const flush = async () => {
+async function flush() {
     if (!dryRun && readings.length) counts.stored += (await storeReadings(readings)).readings;
     readings = [];
-};
+}
 
 for await (const doc of old.find({})) {
     counts.read++;
