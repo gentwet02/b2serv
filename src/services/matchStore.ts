@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { NON_HOM_MAPS } from '@/config/constants';
 import { playerNames } from '@/data/playerNames';
 import { HERO_BASES } from '@/data/towers';
 import {
@@ -178,13 +179,22 @@ const roundExpr = bitsOf('$d', D.round, ROUND_BITS);
 // Writing
 // ---------------------------------------------------------------------------
 
+/** Is this a map never used in Hall of Masters (any id or version of it)? */
+export function isNonHomMap(map: string | undefined) {
+    return !!map && NON_HOM_MAPS.has(mapBaseKey(map));
+}
+
 export async function saveCrawledMatches(
     matches: Match[],
     seasonId: number,
     seenAt?: (match: Match) => number | undefined,
     { renamePlayers = true }: { renamePlayers?: boolean } = {},
 ) {
-    if (matches.length === 0) return { inserted: 0, invalid: 0 };
+    const all = matches;
+    matches = all.filter((m) => !isNonHomMap(m.map));
+    const nonHom = all.length - matches.length;
+    if (nonHom > 0) logger.info(`${nonHom} match(es) skipped: map only played outside HoM`);
+    if (matches.length === 0) return { inserted: 0, invalid: 0, nonHom };
     await loadCodeBook();
     await ensureIndexes(seasonId);
 
@@ -237,7 +247,7 @@ export async function saveCrawledMatches(
         docs.push({ _id: packId(match.id), t, a, b, x, y, d });
     }
     if (invalid > 0) logger.warn(`${invalid} match(es) skipped: missing data or code out of range`);
-    if (docs.length === 0) return { inserted: 0, invalid };
+    if (docs.length === 0) return { inserted: 0, invalid, nonHom };
 
     const result = await collection(seasonId).bulkWrite(
         docs.map(({ t, ...doc }) => ({
@@ -250,7 +260,7 @@ export async function saveCrawledMatches(
         { ordered: false },
     );
     if (result.upsertedCount > 0) optionsCache.clear();
-    return { inserted: result.upsertedCount, invalid };
+    return { inserted: result.upsertedCount, invalid, nonHom };
 }
 
 // ---------------------------------------------------------------------------

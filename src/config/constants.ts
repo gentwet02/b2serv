@@ -49,3 +49,18 @@ export const MAX_TOWERS = 6;
 export const MAX_EX_HEROES = 6;
 export const MAX_EX_TOWERS = 10;
 export const MAX_EX_MAPS = 10;
+
+/**
+ * Maps only played outside of Hall of Masters (map keys, see mapBaseKey). NK's match history
+ * mixes in some non-HoM games we can't tell apart; matches on these maps are dropped at least.
+ */
+export const NON_HOM_MAPS: ReadonlySet<string> = new Set([
+    'bloontoniummines',
+    'docks',
+    'inthewall',
+    'islandbase',
+    'mayan',
+    'park',
+    'thinice',
+    'upontheroof',
+]);
