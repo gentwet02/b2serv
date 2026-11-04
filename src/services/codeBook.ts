@@ -328,16 +328,6 @@ export function nameTimelineOf(userId: string): string[] {
     return player ? [...(player.o ?? []), player.n] : [];
 }
 
-/** Every name the player went by (current one first), except `shown`. */
-export function otherNamesOf(userId: string, shown: string): string[] {
-    const code = playerByUser.get(userId);
-    const player = code === undefined ? undefined : playerByCode.get(code);
-    if (!player) return [];
-    return [player.n, ...(player.o ?? [])].filter(
-        (name) => name !== shown && name !== 'Unknown player',
-    );
-}
-
 function nameHit(needle: string) {
     return (name: string | undefined) =>
         !!name && name.toLowerCase().includes(needle);

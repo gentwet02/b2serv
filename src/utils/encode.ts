@@ -1,17 +1,22 @@
 import { playerNames } from '@/config/playerNames';
-import { otherNamesOf } from '@/services/codeBook';
+import { nameTimelineOf } from '@/services/codeBook';
 import type { LeaderboardPlayer, LeaderboardPlayerEncoded } from '@/types/leaderboard';
 import { extractUserId } from './helpers';
 
 export function encodePlayer(player: LeaderboardPlayer): LeaderboardPlayerEncoded {
     const userId = extractUserId(player.profile);
     const alias = playerNames[userId];
-    const others = otherNamesOf(userId, player.displayName);
+    const timeline = nameTimelineOf(userId);
+    const current = timeline.at(-1);
+    const old = timeline
+        .slice(0, -1)
+        .filter((name) => name !== player.displayName && name !== 'Unknown player');
     return {
         i: userId,
         ...(alias && { r: alias }),
         n: player.displayName,
         d: +player.currentlyInHoM + player.score.toString(),
-        ...(others.length > 0 && { o: others }),
+        ...(old.length > 0 && { o: old }),
+        ...(current && current !== player.displayName && { c: current }),
     };
 }
