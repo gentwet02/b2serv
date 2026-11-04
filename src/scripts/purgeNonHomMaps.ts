@@ -29,7 +29,7 @@ if (codes.length > 0) {
     let total = 0;
     for (const seasonId of seasons) {
         for (const code of codes) {
-            const filter = { $expr: { $in: [mapExpr, code] } };
+            const filter = { $expr: { $in: [mapExpr, [code]] } };
             const n = dryRun
                 ? await collection(seasonId).countDocuments(filter)
                 : (await collection(seasonId).deleteMany(filter)).deletedCount;
