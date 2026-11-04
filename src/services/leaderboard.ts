@@ -155,8 +155,9 @@ function orderNames(recorded: string[], latestOf: (name: string) => number | und
 /**
  * The names a player went by other than `currentName`, newest first. Seasons come from the
  * leaderboards, the only data that keeps the name a player had at the time; the order is the
- * code book's, fixed by those seasons (orderNames). A name on no leaderboard gets the seasons
- * of the dated names around it as bounds.
+ * code book's, fixed by those seasons (orderNames). A name on no leaderboard came after the
+ * name the player ended season A with and before the one they ended season B with (or the
+ * current name, on the live season): it was used in seasons A+1 to B.
  */
 export function getNameHistory(userId: NkUserId, currentName: string): PastName[] {
     const seasonsOf = new Map<string, number[]>();
@@ -190,11 +191,15 @@ export function getNameHistory(userId: NkUserId, currentName: string): PastName[
                     .slice(i + 1)
                     .map((n) => seasonsOf.get(n)?.at(-1))
                     .find((s) => s !== undefined) ?? currentFirst;
+            // a reused name can make the bounds cross: keep the later one
+            const from = olderSeason === undefined ? undefined : olderSeason + 1;
+            const to =
+                newerSeason === undefined ? undefined : Math.max(newerSeason, from ?? newerSeason);
             return {
                 name,
                 seasons,
-                ...(olderSeason !== undefined && { after: olderSeason }),
-                ...(newerSeason !== undefined && { before: newerSeason }),
+                ...(from !== undefined && { from }),
+                ...(to !== undefined && { to }),
             };
         })
         .reverse();

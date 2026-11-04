@@ -16,12 +16,13 @@ export interface PlayerMatchesResponse {
 
 /**
  * A name the player no longer uses, and the seasons they ranked under it (seasonIds, newest
- * first). A name on no leaderboard has no seasons: `after` / `before` are the seasons of the
- * dated names around it in the player's name order, so it was used in between.
+ * first). A name on no leaderboard has no seasons: `from` / `to` (inclusive) are the seasons it
+ * was used in, worked out from the names the player ended the seasons around it with. A side
+ * is missing when no dated name bounds it.
  */
 export interface PastName {
     name: string;
     seasons: number[];
-    after?: number;
-    before?: number;
+    from?: number;
+    to?: number;
 }
