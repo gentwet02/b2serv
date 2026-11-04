@@ -8,7 +8,6 @@ import {
     MAX_EX_TOWERS,
     MAX_HEROES,
     MAX_TOWERS,
-    NAME_PARAM,
 } from '@/config/matches';
 import { crawlState, nextCrawlInMs, refreshMatchesHistory } from '@/services/matchesHistory';
 import {
@@ -20,10 +19,13 @@ import {
     queryMatches,
 } from '@/services/matchStore';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
-import type { FacetFilter, HeroPick, MatchSort } from '@/types/match';
-import { getNkClientStats, isNkUserId } from '@/utils/helpers';
+import type { FacetFilter, HeroPick } from '@/types/match';
+import { getNkClientStats } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 import { scheduleEvery } from '@/utils/scheduler';
+import { isMatchSort } from '@/validators/match';
+import { isNkUserId } from '@/validators/nk';
+import { NAME_PARAM } from '@/validators/params';
 
 export const matchesHistory = new Hono();
 
@@ -146,7 +148,7 @@ matchesHistory.get('/', async (c) => {
         ...parseFilter(c, season.seasonId),
         offset: clampInt(c.req.query('offset'), 0, 0, 100_000),
         limit: clampInt(c.req.query('limit'), 20, 1, MAX_MATCHES_PAGE),
-        sort: (MATCH_SORTS as readonly string[]).includes(sort) ? (sort as MatchSort) : 'newest',
+        sort: isMatchSort(sort) ? sort : 'newest',
     };
 
     try {

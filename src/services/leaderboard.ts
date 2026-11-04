@@ -8,6 +8,7 @@ import {
 import { fetchLeaderboard } from '@/services/ninjakiwi';
 import { getLiveSeason, getSeasons, type SeasonInfo } from '@/services/seasons';
 import type { LeaderboardPlayer, LeaderboardPlayerEncoded } from '@/types/leaderboard';
+import type { NkUserId } from '@/types/ninjakiwi';
 import { encodePlayer } from '@/utils/encode';
 import { extractUserId, type Priority } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
@@ -24,7 +25,7 @@ const cache = new Map<number, LeaderboardEntry>();
 const inFlight = new Map<number, Promise<void>>();
 
 /** seasonId → userId → rank (1-based) and score; every season we have, for rank history. */
-const seasonRanks = new Map<number, Map<string, { rank: number; score: number }>>();
+const seasonRanks = new Map<number, Map<NkUserId, { rank: number; score: number }>>();
 
 function remember(seasonId: number, players: LeaderboardPlayer[], updatedAt: Date, final: boolean) {
     cache.set(seasonId, {
@@ -49,17 +50,17 @@ export const getLeaderboardSize = (seasonId: number) => seasonRanks.get(seasonId
 export function getRankRange(seasonId: number, from: number, to: number) {
     const ranks = seasonRanks.get(seasonId);
     if (!ranks) return null;
-    const players: { userId: string; rank: number }[] = [];
+    const players: { userId: NkUserId; rank: number }[] = [];
     for (const [userId, { rank }] of ranks) {
         if (rank >= from && rank <= to) players.push({ userId, rank });
     }
     return players.sort((a, b) => a.rank - b.rank);
 }
 
-export const getSeasonRank = (seasonId: number, userId: string) =>
+export const getSeasonRank = (seasonId: number, userId: NkUserId) =>
     seasonRanks.get(seasonId)?.get(userId)?.rank ?? null;
 
-export function getRankHistory(userId: string) {
+export function getRankHistory(userId: NkUserId) {
     const live = getLiveSeason();
     const seasons = getSeasons();
     const history: {

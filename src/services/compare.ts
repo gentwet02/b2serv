@@ -1,5 +1,5 @@
 import { HEAVY_QUERY_MAX_MS } from '@/config/limits';
-import { playerNames } from '@/data/playerNames';
+import { playerNames } from '@/config/playerNames';
 import { loadCodeBook, playerCodeOf } from '@/services/codeBook';
 import {
     byGames,
@@ -24,11 +24,11 @@ import {
 } from '@/services/matchStore';
 import { seasonScope } from '@/services/ranges';
 import { describeSide, resolveSides, type FirstSide, type SideSpec } from '@/services/sides';
-import type { HeroPick, MatchSort, StoredMatchDoc } from '@/types/match';
+import type { HeroPick, MapFilter, MatchSort, StoredMatchDoc } from '@/types/match';
 import type { CompareSeason, CompareSide } from '@/types/season';
 import { cached, createCache } from '@/utils/cache';
 import { heavy } from '@/utils/heavy';
-import { heroBase, mapFits, type MapVariant } from '@/utils/matchLabels';
+import { heroBase, mapFits } from '@/utils/matchLabels';
 
 /**
  * The compare side of the stats page: the games between two sides (a player or a range of
@@ -43,8 +43,8 @@ const COMPARE_LOADOUTS = 60;
 
 /** Map and loadout filters on the games between the sides (side 1's loadout, side 2's). */
 export interface GameFilter {
-    map?: { base: string; variant?: MapVariant | undefined } | undefined;
-    exMaps: { base: string; variant?: MapVariant | undefined }[];
+    map?: MapFilter | undefined;
+    exMaps: MapFilter[];
     own: LoadoutFilter;
     theirs: LoadoutFilter;
 }

@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 import { NK_ASSET_URL_PREFIX, NK_GUILD_URL_PREFIX } from '@/config/nk';
 import type { ProfileCodeKind } from '@/services/codeBook';
 import type {
+    ArenaCodes,
+    EquippedCodes,
     NkBadge,
     NkProfileBody,
     NkStats,
@@ -9,6 +11,7 @@ import type {
     ProfileSeason,
     ProfileSeasonDoc,
     RankedPoint,
+    StatsCodes,
     StoredProfileDoc,
 } from '@/types/profile';
 
@@ -141,16 +144,18 @@ export function profileNames(body: NkProfileBody): Map<ProfileCodeKind, Set<stri
 // encode one reading
 // ---------------------------------------------------------------------------
 
-const STAT_KEYS: (keyof NkStats)[] = [
-    'wins',
-    'draws',
-    'losses',
-    'win_streak',
-    'highest_win_streak',
-    'no_lives_lost',
-    'first_bloons',
-];
-const stats = (s: Partial<NkStats> | undefined) => STAT_KEYS.map((k) => num(s?.[k]));
+/** In StatsCodes order. */
+function stats(s: Partial<NkStats> | undefined): StatsCodes {
+    return [
+        num(s?.wins),
+        num(s?.draws),
+        num(s?.losses),
+        num(s?.win_streak),
+        num(s?.highest_win_streak),
+        num(s?.no_lives_lost),
+        num(s?.first_bloons),
+    ];
+}
 const rankedPoint = (r: number[]): RankedPoint => [r[0]!, r[1]!, r[2]!, r[3]!, r[4]!];
 
 /** "season_19" → 19 */
@@ -166,7 +171,7 @@ export function encodeCurrent(body: NkProfileBody, codec: Codec) {
     const avatar = str(body.equippedAvatarURL);
     const banner = str(body.equippedBannerURL);
     const border = str(body.equippedBorderURL);
-    const e = [
+    const e: EquippedCodes = [
         opt('avatar', avatar && assetKey(avatar)),
         opt('banner', banner && assetKey(banner)),
         opt('border', border && assetKey(border)),
@@ -194,7 +199,7 @@ export function encodeCurrent(body: NkProfileBody, codec: Codec) {
     const f = (body.is_vip ? 1 : 0) | (body.is_club_member ? 2 : 0) | (inGuild ? 4 : 0);
 
     const season = nkSeasonNumber(body.currentSeason);
-    const a = [
+    const a: ArenaCodes = [
         season === null ? 0 : season + 1,
         num(body.currentSeason_trophies),
         opt('arena', str(body.currentSeason_highestArena)) + 1,
@@ -527,7 +532,7 @@ export function decodeProfile(doc: ProfileDoc, displayName: string, codec: Codec
         lifetime_highestArenaIndex: a[6] ?? 0,
         arenaLeagueTier: a[7] ?? 0,
         inGuild: (doc.f & 4) !== 0,
-        guild: guild ? NK_GUILD_URL_PREFIX + guild : null,
+        guild: guild ? `${NK_GUILD_URL_PREFIX}${guild}` : null,
         accolades,
         _bloonStats: bloons,
         _towers: towers,
@@ -642,10 +647,11 @@ export function unpack(stored: StoredProfileDoc): ProfileDoc {
         _id: stored._id,
         t: new Date(stored.t),
         f,
-        e: minusOne(v.many(4)),
-        r: v.many(7),
-        c: v.many(7),
-        a: v.many(9),
+        // many(n) pads to n, so these have the tuples' lengths
+        e: minusOne(v.many(4)) as EquippedCodes,
+        r: v.many(7) as StatsCodes,
+        c: v.many(7) as StatsCodes,
+        a: v.many(9) as ArenaCodes,
         s: [],
     };
     const g = v.many(v.one() * 2);
@@ -666,7 +672,7 @@ export function unpack(stored: StoredProfileDoc): ProfileDoc {
             r0: c.many(5) as RankedPoint,
             r1: c.many(5) as RankedPoint,
             bw: c.one(),
-            e: minusOne(c.many(4)),
+            e: minusOne(c.many(4)) as EquippedCodes,
         };
         const sg = c.many(c.one() * 2);
         if (sg.length) season.g = sg;

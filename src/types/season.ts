@@ -1,4 +1,4 @@
-import type { Model, NkApi } from '@/types/ninjakiwi';
+import type { Model, NkApi, NkUserId } from '@/types/ninjakiwi';
 
 export interface SeasonsResponse {
     error: string | null;
@@ -26,13 +26,13 @@ export interface CompareSide {
     /** ranks counted and leaderboard size (range mode) */
     bounds?: { from: number; to: number; size: number } | undefined;
     /** null: anyone (side 2 only) */
-    players: { userId: string; rank: number | null; name?: string | undefined }[] | null;
+    players: { userId: NkUserId; rank: number | null; name?: string | undefined }[] | null;
 }
 
 /** One season of a comparison: who is on each side that season (rank in that season). */
 export interface CompareSeason {
     seasonId: number;
-    name: string;
+    name: SeasonName;
     a: CompareSide;
     b: CompareSide;
 }

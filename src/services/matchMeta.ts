@@ -2,6 +2,7 @@ import mongoose, { Schema, type Model } from 'mongoose';
 import { COLLECTIONS } from '@/config/db';
 import type { Match } from '@/types/match';
 import { logger } from '@/utils/logger';
+import { Required } from '@/validators/schema';
 
 /** Hero portrait and map image URLs seen in nk data/assets, mirrored in memory */
 
@@ -13,9 +14,9 @@ interface AssetDoc {
 
 const assetSchema = new Schema<AssetDoc>(
     {
-        kind: { type: String, required: true },
-        key: { type: String, required: true },
-        url: { type: String, required: true },
+        kind: { ...Required.String, enum: ['hero', 'map'] },
+        key: Required.String,
+        url: Required.String,
     },
     { collection: COLLECTIONS.NK_ASSETS, versionKey: false },
 );

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { playerNames } from '@/data/playerNames';
+import { playerNames } from '@/config/playerNames';
 
 export const players = new Hono();
 

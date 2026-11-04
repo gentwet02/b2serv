@@ -1,12 +1,12 @@
 import { Hono, type Context } from 'hono';
 import { ERROR_MESSAGES } from '@/config/errors';
 import { MAX_COMPARE_GAMES_PAGE } from '@/config/limits';
-import { MATCH_SORTS } from '@/config/matches';
 import { runCompare, runCompareGames } from '@/services/compare';
 import type { MatchSort } from '@/types/match';
 import { isOverloaded } from '@/utils/heavy';
 import { logger } from '@/utils/logger';
 import { parseLoadoutFilter, parseMapFocus, parseOverlap, parseSides } from '@/utils/params';
+import { isMatchSort } from '@/validators/match';
 
 export const compare = new Hono();
 
@@ -75,9 +75,7 @@ compare.get('/games', async (c) => {
         return fail(c, 'The games list needs a player on one side', 400);
     }
     const sortParam = c.req.query('sort') ?? 'newest';
-    const sort: MatchSort = (MATCH_SORTS as readonly string[]).includes(sortParam)
-        ? (sortParam as MatchSort)
-        : 'newest';
+    const sort: MatchSort = isMatchSort(sortParam) ? sortParam : 'newest';
     const offset = Math.max(0, Math.floor(Number(c.req.query('offset')) || 0));
     const limit = Math.min(
         MAX_COMPARE_GAMES_PAGE,

@@ -1,6 +1,15 @@
+/** Every result NK gives a match side. */
+export const GAME_RESULTS = [
+    'cancelled',
+    'draw',
+    'lobbyDC',
+    'lose',
+    'opponentLobbyDC',
+    'win',
+] as const;
+export const GAME_TYPES = ['Casual', 'Event', 'GuildWar', 'Ranked'] as const;
+
 export const MATCH_SORTS = ['newest', 'oldest', 'longest', 'shortest', 'rounds'] as const;
-/** A hero, tower or map name in a query parameter. */
-export const NAME_PARAM = /^[A-Za-z0-9_]{1,40}$/;
 export const MAX_HEROES = 2;
 export const MAX_TOWERS = 6;
 /** Exclusions: none of these in the match (or on that side, in same player mode). */

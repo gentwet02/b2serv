@@ -9,9 +9,10 @@ import {
     rangeBounds,
     resolveSeasons,
     type RangeExclude,
-    type VersusRange,
 } from '@/services/ranges';
 import { getSeasonById } from '@/services/seasons';
+import type { VersusRange } from '@/types/leaderboard';
+import type { NkUserId } from '@/types/ninjakiwi';
 import type { CompareSeason, CompareSide } from '@/types/season';
 
 /**
@@ -20,10 +21,10 @@ import type { CompareSeason, CompareSide } from '@/types/season';
  */
 
 export type RangeSpec = { range: VersusRange; exclude: RangeExclude };
-export type FirstSide = { player: string } | RangeSpec;
+export type FirstSide = { player: NkUserId } | RangeSpec;
 export type SideSpec = FirstSide | { anyone: true };
 
-export const isPlayer = (spec: SideSpec): spec is { player: string } => 'player' in spec;
+export const isPlayer = (spec: SideSpec): spec is { player: NkUserId } => 'player' in spec;
 export const isAnyone = (spec: SideSpec): spec is { anyone: true } => 'anyone' in spec;
 
 /** "p:<id>", "anyone", "t50-t10": a side in cache keys. */

@@ -1,15 +1,26 @@
-import type { NK_API_BASE_URL } from '@/config/nk';
+import type {
+    NK_API_BASE_URL,
+    NK_ASSET_URL_PREFIX,
+    NK_GUILD_URL_PREFIX,
+    NK_USER_URL_PREFIX,
+} from '@/config/nk';
 import type { Match } from './match';
 
 export type NkApi = `${typeof NK_API_BASE_URL}/${string}`;
+/** NK's link to a player ("…/battles2/users/<id>"); extractUserId reads the id back. */
+export type NkProfileUrl = `${typeof NK_USER_URL_PREFIX}${string}`;
+export type NkGuildUrl = `${typeof NK_GUILD_URL_PREFIX}${string}`;
+/** A picture on NK's usual asset host. NK sometimes uses others, so asset fields stay string. */
+export type NkAssetUrl = `${typeof NK_ASSET_URL_PREFIX}${string}`;
 
 /** A user id checked with isNkUserId, or taken from one of NK's own links. */
 export type NkUserId = string & { readonly __brand: 'NkUserId' };
 
-export interface NinjaKiwiResponse<T> {
-    body: T;
-    next?: boolean;
-}
+/**
+ * A value NK usually sends, or a new one it added since (we keep those, see matchIssues).
+ * Suggests the known values but stays a plain string: narrow with validators/ to rely on one.
+ */
+export type KnownOr<T extends string> = T | (string & {});
 
 export interface Model {
     name: string;
@@ -26,7 +37,7 @@ export interface StoreLookup {
     /** which of these match ids are already stored */
     isStored: (ids: string[]) => Promise<Set<string>>;
     /** whether at least one match of this player is already stored this season */
-    hasHistory: (userId: string) => Promise<boolean>;
+    hasHistory: (userId: NkUserId) => Promise<boolean>;
 }
 
 export interface HistoryOptions extends StoreLookup {

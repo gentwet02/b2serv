@@ -1,3 +1,4 @@
+/** Heroes without their skin: "Quincy_Cyber" and "Agent_Jericho" have one of these in them. */
 export const HERO_BASES = [
     'Adora',
     'Benjamin',

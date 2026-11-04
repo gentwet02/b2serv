@@ -4,7 +4,7 @@ import {
     PLAYER_FETCH_CONCURRENCY,
 } from '@/config/crawler';
 import { NK_API } from '@/config/nk';
-import type { LeaderboardPlayer, LeadrboardResponse } from '@/types/leaderboard';
+import type { LeaderboardPlayer, LeaderboardResponse } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
 import type {
     CrawlOptions,
@@ -59,9 +59,9 @@ async function fetchLeaderboardPage(
     seasonId: number,
     pageNb: number,
     priority: Priority,
-): Promise<LeadrboardResponse | null> {
+): Promise<LeaderboardResponse | null> {
     const label = `season ${seasonId} leaderboard page ${pageNb}`;
-    const data: LeadrboardResponse | null = await fetchWithRetry(
+    const data: LeaderboardResponse | null = await fetchWithRetry(
         NK_API.LEADERBOARD(seasonId, pageNb),
         { priority },
     );

@@ -20,8 +20,9 @@ import { fetchSeasons } from '@/services/ninjakiwi';
 import { storeReadings, type ProfileReading } from '@/services/profileStore';
 import { toMs, toSeasonId } from '@/services/seasons';
 import type { NkProfileBody } from '@/types/profile';
-import { extractUserId, isNkUserId } from '@/utils/helpers';
+import { extractUserId } from '@/utils/helpers';
 import { readJsonObjects } from '@/utils/readJsonObjects';
+import { isNkUserId } from '@/validators/nk';
 
 interface Snapshot {
     plid?: string;

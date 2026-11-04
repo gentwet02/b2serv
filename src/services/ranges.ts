@@ -1,9 +1,8 @@
+import { VERSUS_RANGES } from '@/config/leaderboard';
 import { listMatchSeasons } from '@/services/matchStore';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
-
-/** Leaderboard ranges the stats and compare sides can be. */
-export const VERSUS_RANGES = ['t10', 't25', 't50', 't100', 't25p', 't50p', 't75p', 'all'] as const;
-export type VersusRange = (typeof VERSUS_RANGES)[number];
+import type { VersusRange } from '@/types/leaderboard';
+import { isVersusRange } from '@/validators/leaderboard';
 
 /** Players a range covers in a leaderboard of `size` players. */
 export function rangeCount(range: VersusRange, size: number) {
@@ -17,8 +16,8 @@ export type RangeExclude = VersusRange | null;
 
 /** ?exclude=t10: kept when it's a range listed before `range`. */
 export function parseExclude(range: VersusRange, exclude: string | undefined): RangeExclude {
-    const index = (VERSUS_RANGES as readonly string[]).indexOf(exclude ?? '');
-    return index >= 0 && index < VERSUS_RANGES.indexOf(range) ? VERSUS_RANGES[index]! : null;
+    if (!exclude || !isVersusRange(exclude)) return null;
+    return VERSUS_RANGES.indexOf(exclude) < VERSUS_RANGES.indexOf(range) ? exclude : null;
 }
 
 /**

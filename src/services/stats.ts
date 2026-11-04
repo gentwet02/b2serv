@@ -11,14 +11,9 @@ import {
     unpackLoadout,
 } from '@/services/matchStore';
 import { getLiveSeason } from '@/services/seasons';
+import type { MapFilter, MapVariant } from '@/types/match';
 import { logger } from '@/utils/logger';
-import {
-    currentMapId,
-    heroBase,
-    mapBaseKey,
-    mapVariant,
-    type MapVariant,
-} from '@/utils/matchLabels';
+import { currentMapId, heroBase, mapBaseKey, mapVariant } from '@/utils/matchLabels';
 
 /**
  * Stats page: hero, tower, strat (hero + 3 towers) and map usage and win rates,
@@ -51,7 +46,7 @@ export interface StatsSeasonGroup {
 export interface StatsQuery {
     seasons: StatsSeasonGroup[];
     /** a base map key ("oasis"), any version, or only its classic / reversed one */
-    map?: { base: string; variant?: MapVariant | undefined } | undefined;
+    map?: MapFilter | undefined;
     /** any variant of `base`, or exactly `hero` */
     hero?: { base: string; hero?: string | undefined } | undefined;
     towers: string[]; // ≤ 3, all in the loadout
@@ -60,7 +55,7 @@ export interface StatsQuery {
     /** exclusions: loadouts with none of these towers */
     exTowers: string[];
     /** exclusions: games not on these maps (or map versions) */
-    exMaps: { base: string; variant?: MapVariant | undefined }[];
+    exMaps: MapFilter[];
 }
 
 /** A loadout condition ($expr) for each place a player can have in a game. */
@@ -483,8 +478,8 @@ export interface OpponentOptionsQuery {
     /** the group's own loadout filter, and its cache key */
     own: SideExprs | null;
     ownKey: string;
-    map?: { base: string; variant?: MapVariant | undefined } | undefined;
-    exMaps: { base: string; variant?: MapVariant | undefined }[];
+    map?: MapFilter | undefined;
+    exMaps: MapFilter[];
     /** the opponents' current picks: an option must still fit them */
     hero?: { base: string; hero?: string | undefined } | undefined;
     towers: string[];

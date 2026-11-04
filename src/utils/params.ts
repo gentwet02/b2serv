@@ -1,9 +1,12 @@
-import { MAX_EX_HEROES, MAX_EX_MAPS, MAX_EX_TOWERS, NAME_PARAM } from '@/config/matches';
+import { MAX_EX_HEROES, MAX_EX_MAPS, MAX_EX_TOWERS } from '@/config/matches';
 import type { LoadoutFilter } from '@/services/matchStore';
-import { parseExclude, VERSUS_RANGES, type VersusRange } from '@/services/ranges';
+import { parseExclude } from '@/services/ranges';
 import type { FirstSide, RangeSpec, SideSpec } from '@/services/sides';
-import { isNkUserId } from '@/utils/helpers';
+import type { VersusRange } from '@/types/leaderboard';
 import { parseMapFilter } from '@/utils/matchLabels';
+import { isVersusRange } from '@/validators/leaderboard';
+import { isNkUserId } from '@/validators/nk';
+import { NAME_PARAM } from '@/validators/params';
 
 /** Query parameter readers shared by the stats and compare routes. */
 
@@ -64,9 +67,7 @@ export function parseMapFocus(query: Query) {
 
 /** A range of each leaderboard: ?players=t25 (default), &exclude=t10 to leave a smaller one out. */
 function parseRange(range: string | undefined, exclude: string | undefined): RangeSpec {
-    const value: VersusRange = (VERSUS_RANGES as readonly string[]).includes(range ?? '')
-        ? (range as VersusRange)
-        : 't25';
+    const value: VersusRange = range && isVersusRange(range) ? range : 't25';
     return { range: value, exclude: parseExclude(value, exclude) };
 }
 

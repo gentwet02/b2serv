@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { CODE_BOOK_SYNC_MS } from '@/config/cache';
 import { COLLECTIONS } from '@/config/db';
-import { playerNames } from '@/data/playerNames';
+import { playerNames } from '@/config/playerNames';
 import { logger } from '@/utils/logger';
 
 /**

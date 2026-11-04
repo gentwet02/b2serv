@@ -1,4 +1,4 @@
-import { playerNames } from '@/data/playerNames';
+import { playerNames } from '@/config/playerNames';
 import type { LeaderboardPlayer, LeaderboardPlayerEncoded } from '@/types/leaderboard';
 import { extractUserId } from './helpers';
 

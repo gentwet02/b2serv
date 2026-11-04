@@ -1,4 +1,5 @@
 import type mongoose from 'mongoose';
+import type { NkGuildUrl } from '@/types/ninjakiwi';
 
 /** Ranked or casual stats, as NK sends them. */
 export interface NkStats {
@@ -46,14 +47,47 @@ export interface NkProfileBody {
     lifetime_trophies?: number;
     arenaLeagueTier?: number;
     inGuild?: boolean;
-    guild?: string | null;
+    guild?: NkGuildUrl | null;
     accolades?: { type?: string; subtype?: string; value?: number }[];
     _bloonStats?: { bloon_type?: string; sends?: number; pops?: number }[];
     _towers?: { type?: string; used?: number; unlocked?: boolean }[];
 }
 
-/** Lifetime ranked numbers at one point in time: [wins, draws, losses, win streak, best win streak] */
-export type RankedPoint = [number, number, number, number, number];
+/** Lifetime ranked numbers at one point in time. */
+export type RankedPoint = [
+    wins: number,
+    draws: number,
+    losses: number,
+    winStreak: number,
+    bestWinStreak: number,
+];
+
+/** Equipped cosmetics as codes, -1 = none. */
+export type EquippedCodes = [avatar: number, banner: number, border: number, title: number];
+
+/** Ranked or casual stats, in NkStats order. */
+export type StatsCodes = [
+    wins: number,
+    draws: number,
+    losses: number,
+    winStreak: number,
+    bestWinStreak: number,
+    noLivesLost: number,
+    firstBloons: number,
+];
+
+/** Arena and season numbers of a profile (codes + 1, 0 = none). */
+export type ArenaCodes = [
+    nkSeason: number,
+    seasonTrophies: number,
+    seasonArena: number,
+    seasonArenaIndex: number,
+    lifetimeTrophies: number,
+    lifetimeArena: number,
+    lifetimeArenaIndex: number,
+    leagueTier: number,
+    chestsOpened: number,
+];
 
 /**
  * One season of a player, in `player_profiles.s`. Ranked stats never reset on NK's side,
@@ -70,8 +104,8 @@ export interface ProfileSeasonDoc {
     r1: RankedPoint;
     /** best win streak of the season (never lower than the truth we could see) */
     bw: number;
-    /** equipped at the last reading: [avatar, banner, border, title] codes, -1 = none */
-    e: number[];
+    /** equipped at the last reading */
+    e: EquippedCodes;
     /** equipped badges at the last reading: [season + 1, badge code, …] */
     g?: number[];
 }
@@ -84,8 +118,7 @@ export interface ProfileDoc {
     _id: number;
     /** when the latest reading was taken */
     t: Date;
-    /** equipped [avatar, banner, border, title], -1 = none */
-    e: number[];
+    e: EquippedCodes;
     /** equipped badges [season + 1, badge code, …] */
     g?: number[];
     /** every badge (medal) earned, same layout as g */
@@ -94,14 +127,11 @@ export interface ProfileDoc {
     f: number;
     /** guild code */
     gu?: number;
-    /** ranked and casual [wins, draws, losses, win streak, best win streak, no lives lost, first bloons] */
-    r: number[];
-    c: number[];
-    /**
-     * [NK season number + 1 (0 = none), season trophies, season arena code + 1, season arena index,
-     *  lifetime trophies, lifetime arena code + 1, lifetime arena index, league tier, chests opened]
-     */
-    a: number[];
+    /** ranked and casual stats */
+    r: StatsCodes;
+    c: StatsCodes;
+    /** NK season number + 1 and arena codes + 1 (0 = none) */
+    a: ArenaCodes;
     /** varints: (unit code, used × 2 + unlocked)… */
     u?: mongoose.mongo.Binary;
     /** varints: (bloon code, sends, pops)… */

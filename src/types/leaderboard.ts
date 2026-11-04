@@ -1,22 +1,17 @@
-import type { Model, NkApi } from '@/types/ninjakiwi';
+import type { VERSUS_RANGES } from '@/config/leaderboard';
+import type { Model, NkApi, NkProfileUrl, NkUserId } from '@/types/ninjakiwi';
+
+export type VersusRange = (typeof VERSUS_RANGES)[number];
 
 export interface LeaderboardPlayer {
     displayName: string;
     score: number;
     currentlyInHoM: boolean;
-    profile: string;
+    profile: NkProfileUrl;
 }
 
-export interface LeaderboardDocument {
-    _id?: string;
-    seasonId: number;
-    players: LeaderboardPlayer[];
-    createdAt: Date;
-    pageCount: number;
-}
-
-export interface LeadrboardResponse {
-    error: string;
+export interface LeaderboardResponse {
+    error: string | null;
     success: boolean;
     body: LeaderboardPlayer[];
     model: Model;
@@ -26,12 +21,8 @@ export interface LeadrboardResponse {
 }
 
 export interface LeaderboardPlayerEncoded {
-    i: string;
+    i: NkUserId;
     r?: string;
     n: string;
     d: string;
-}
-
-export interface CachedLeaderboards {
-    [key: number]: LeaderboardPlayerEncoded[];
 }

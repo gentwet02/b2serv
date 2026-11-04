@@ -1,4 +1,5 @@
-import { HERO_BASES } from '@/data/towers';
+import { HERO_BASES } from '@/config/towers';
+import type { MapFilter, MapVariant } from '@/types/match';
 
 /**
  * Grouping rules for filters. Stored matches keep Ninja Kiwi's raw names;
@@ -39,7 +40,6 @@ export function mapKey(map: string): string {
         .replace(/_/g, '');
 }
 
-export type MapVariant = 'classic' | 'reversed';
 const REVERSED = /_reversed$/;
 
 /** "oasis_reversed" is the reversed version of "oasis". */
@@ -53,7 +53,7 @@ export const mapBaseKey = (map: string) => mapKey(map.replace(REVERSED, ''));
  * A map filter: "oasis" (both versions), "oasis:classic" or "oasis:reversed".
  * Old keys ("oasisreversed") still work.
  */
-export function parseMapFilter(value: string | undefined) {
+export function parseMapFilter(value: string | undefined): MapFilter | undefined {
     const [rawBase = '', rawVariant] = (value ?? '').split(':');
     let base = rawBase.toLowerCase().replace(/[^a-z0-9]/g, '');
     if (!base) return undefined;
@@ -67,5 +67,5 @@ export function parseMapFilter(value: string | undefined) {
 }
 
 /** Does a raw NK map id fit a parsed map filter? */
-export const mapFits = (map: string, filter: { base: string; variant?: MapVariant | undefined }) =>
+export const mapFits = (map: string, filter: MapFilter) =>
     mapBaseKey(map) === filter.base && (!filter.variant || mapVariant(map) === filter.variant);

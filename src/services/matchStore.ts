@@ -3,8 +3,8 @@ import { MATCH_OPTIONS_TTL_MS } from '@/config/cache';
 import { COLLECTIONS, MATCHES_COLLECTION_NAME } from '@/config/db';
 import { NON_HOM_MAPS } from '@/config/matches';
 import { NK_USER_URL_PREFIX } from '@/config/nk';
-import { playerNames } from '@/data/playerNames';
-import { HERO_BASES } from '@/data/towers';
+import { playerNames } from '@/config/playerNames';
+import { HERO_BASES } from '@/config/towers';
 import {
     CODE_BITS,
     codeOf,
@@ -23,7 +23,9 @@ import type {
     BuiltQuery,
     FacetFilter,
     FilterOptions,
+    GameResult,
     HeroPick,
+    MapVariant,
     Match,
     MatchesFilter,
     MatchPlayer,
@@ -41,8 +43,8 @@ import {
     currentMapId,
     mapVariant,
     parseMapFilter,
-    type MapVariant,
 } from '@/utils/matchLabels';
+import { matchIssues } from '@/validators/match';
 
 /**
  * Compact match storage: one collection per season, `matches_s<season>`, 6 small numbers per match.
@@ -76,7 +78,7 @@ export const opposingResult: Record<string, string> = {
     opponentLobbyDC: 'lobbyDC',
     draw: 'draw',
     cancelled: 'cancelled',
-};
+} satisfies Record<GameResult, GameResult>;
 
 // ---------------------------------------------------------------------------
 // Collections
@@ -186,6 +188,19 @@ export function isNonHomMap(map: string | undefined) {
     return !!map && NON_HOM_MAPS.has(mapBaseKey(map));
 }
 
+/** Values already reported, so the log says it once per run, not once per match. */
+const reportedValues = new Set<string>();
+
+function warnUnknownValues(matches: Match[]) {
+    for (const match of matches) {
+        for (const issue of matchIssues(match)) {
+            if (reportedValues.has(issue)) continue;
+            reportedValues.add(issue);
+            logger.warn(`Unknown ${issue} (match ${match.id}): stored anyway, update config/`);
+        }
+    }
+}
+
 export async function saveCrawledMatches(
     matches: Match[],
     seasonId: number,
@@ -197,6 +212,7 @@ export async function saveCrawledMatches(
     const nonHom = all.length - matches.length;
     if (nonHom > 0) logger.info(`${nonHom} match(es) skipped: map only played outside HoM`);
     if (matches.length === 0) return { inserted: 0, invalid: 0, nonHom };
+    warnUnknownValues(matches);
     await loadCodeBook();
     await ensureIndexes(seasonId);
 

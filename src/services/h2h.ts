@@ -1,5 +1,5 @@
 import { HEAVY_QUERY_MAX_MS } from '@/config/limits';
-import { playerNames } from '@/data/playerNames';
+import { playerNames } from '@/config/playerNames';
 import { CODE_BITS, loadCodeBook, nameOf, playerCodeOf, playerOf } from '@/services/codeBook';
 import { getAssetUrl } from '@/services/matchMeta';
 import {

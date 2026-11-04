@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { ERROR_MESSAGES } from '@/config/errors';
 import { getMatchesByUserId } from '@/services/database';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
-import { isNkUserId } from '@/utils/helpers';
+import { isNkUserId } from '@/validators/nk';
 
 export const matches = new Hono();
 

@@ -1,48 +1,42 @@
 import type mongoose from 'mongoose';
-import type { MATCH_SORTS } from '@/config/matches';
+import type { GAME_RESULTS, GAME_TYPES, MATCH_SORTS } from '@/config/matches';
+import type { KnownOr, NkProfileUrl, NkUserId } from '@/types/ninjakiwi';
+import type { Hero, HeroBase, Tower } from '@/types/towers';
+
+export type GameResult = (typeof GAME_RESULTS)[number];
+export type GameType = (typeof GAME_TYPES)[number];
+
+export type MapVariant = 'classic' | 'reversed';
+/** A parsed map filter: a map key, both versions or one ("oasis:reversed"). */
+export interface MapFilter {
+    base: string;
+    variant?: MapVariant | undefined;
+}
+
+/** A value of an NK match missing from config/, as "tower: NewMonkey" (see matchIssues). */
+export type MatchIssue = `${'game type' | 'hero' | 'tower' | 'result'}: ${string}`;
 
 export interface MatchPlayer {
     displayName: string;
-    hero: string;
+    hero: KnownOr<Hero>;
     heroPortrait?: string;
-    towerone: string;
-    towertwo: string;
-    towerthree: string;
+    towerone: KnownOr<Tower>;
+    towertwo: KnownOr<Tower>;
+    towerthree: KnownOr<Tower>;
     currentUser?: boolean;
-    result: string;
-    profileURL: string;
+    result: KnownOr<GameResult>;
+    profileURL: NkProfileUrl;
 }
 
 export interface Match {
     id: string;
-    gametype: string;
+    gametype: KnownOr<GameType>;
     map: string;
     duration: number;
     endRound: number;
     mapURL?: string;
     playerLeft: MatchPlayer;
     playerRight: MatchPlayer;
-}
-
-export interface MatchPlayerDocument {
-    i: string;
-    t: number;
-}
-
-export interface MatchDocument {
-    _id?: string;
-    t: number;
-    i: string;
-    d: number;
-    pl: MatchPlayerDocument;
-    pr: MatchPlayerDocument;
-}
-
-export interface CachedMatches {
-    lastUpdated: Date;
-    totalMatches: number;
-    matches: Match[];
-    seasonID: number;
 }
 
 export interface StoredMatchDoc {
@@ -59,8 +53,8 @@ export interface StoredMatchDoc {
 
 /** A hero filter: any variant of `base`, or exactly `hero`. */
 export interface HeroPick {
-    base: string;
-    hero?: string;
+    base: KnownOr<HeroBase>;
+    hero?: KnownOr<Hero>;
 }
 
 export interface MatchesFilter {
@@ -70,10 +64,10 @@ export interface MatchesFilter {
     limit: number;
     sort: MatchSort;
     player?: string; // part of a name (in-game or real)
-    playerId?: string; // exact user id
+    playerId?: NkUserId; // exact user id
     allNames: boolean; // player / player2 also match the names players had before
     heroes: HeroPick[]; // up to 2
-    towers: string[]; // up to 6
+    towers: KnownOr<Tower>[]; // up to 6
     map?: string; // map key
     /**
      * "Same player" mode: player, hero and towers above describe one side of the match,
@@ -83,15 +77,15 @@ export interface MatchesFilter {
     sameSide: boolean;
     player2?: string; // same player mode only: part of the other side's name
     heroes2: HeroPick[]; // same player mode only: ≤ 1
-    towers2: string[]; // same player mode only: ≤ 3
+    towers2: KnownOr<Tower>[]; // same player mode only: ≤ 3
     /** Exclusions: no player uses these (same player mode: side 1 doesn't). */
     exHeroes: HeroPick[];
-    exTowers: string[];
+    exTowers: KnownOr<Tower>[];
     /** map keys, like `map`: none of these maps (or versions) */
     exMaps: string[];
     /** same player mode only: side 2 doesn't use these */
     exHeroes2: HeroPick[];
-    exTowers2: string[];
+    exTowers2: KnownOr<Tower>[];
 }
 
 export type FacetFilter = Omit<MatchesFilter, 'offset' | 'limit' | 'sort'>;
@@ -110,11 +104,11 @@ export interface BuiltQuery {
 /** Heroes and towers available for one side (or both sides when not split). */
 export interface SideOptions {
     heroes: {
-        base: string;
+        base: KnownOr<HeroBase>;
         count: number;
-        variants: { hero: string; count: number; portrait?: string }[];
+        variants: { hero: KnownOr<Hero>; count: number; portrait?: string }[];
     }[];
-    towers: { tower: string; count: number }[];
+    towers: { tower: KnownOr<Tower>; count: number }[];
 }
 
 export interface FilterOptions extends SideOptions {
@@ -126,6 +120,6 @@ export interface FilterOptions extends SideOptions {
         map: string;
         count: number;
         image: string | null;
-        variants: { variant: 'classic' | 'reversed'; count: number }[];
+        variants: { variant: MapVariant; count: number }[];
     }[];
 }

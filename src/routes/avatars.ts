@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { MAX_AVATAR_IDS } from '@/config/limits';
 import { requestAvatars } from '@/services/playerData';
-import { isNkUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
+import { isNkUserId } from '@/validators/nk';
 
 /**
  * GET /avatars?ids=a,b,c   (at most MAX_AVATAR_IDS ids)

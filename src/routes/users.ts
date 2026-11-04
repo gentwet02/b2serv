@@ -13,8 +13,9 @@ import { getLiveSeason, getSeasonById } from '@/services/seasons';
 import type { NkUserId } from '@/types/ninjakiwi';
 import { fixAssetUrl, fixProfileAssets } from '@/utils/assets';
 import { isOverloaded } from '@/utils/heavy';
-import { extractUserId, isNkUserId } from '@/utils/helpers';
+import { extractUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
+import { isNkUserId } from '@/validators/nk';
 
 /**
  * Player data for the client, from the database (background jobs keep it up to date).
