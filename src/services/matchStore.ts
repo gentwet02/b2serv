@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { MATCH_OPTIONS_TTL_MS } from '@/config/cache';
 import { COLLECTIONS, MATCHES_COLLECTION_NAME } from '@/config/db';
-import { NON_HOM_MAPS } from '@/config/matches';
+import { HOM_MAP_REMOVED_SEASON, NON_HOM_MAPS } from '@/config/matches';
 import { NK_USER_URL_PREFIX } from '@/config/nk';
 import { playerNames } from '@/config/playerNames';
 import { HERO_BASES } from '@/config/towers';
@@ -183,9 +183,12 @@ const roundExpr = bitsOf('$d', D.round, ROUND_BITS);
 // Writing
 // ---------------------------------------------------------------------------
 
-/** Is this a map never used in Hall of Masters (any id or version of it)? */
-export function isNonHomMap(map: string | undefined) {
-    return !!map && NON_HOM_MAPS.has(mapBaseKey(map));
+/** Is this map out of the Hall of Masters pool in that season (any id or version of it)? */
+export function isNonHomMap(map: string | undefined, seasonId: number) {
+    if (!map) return false;
+    const key = mapBaseKey(map);
+    const removedFrom = HOM_MAP_REMOVED_SEASON[key];
+    return NON_HOM_MAPS.has(key) || (removedFrom !== undefined && seasonId >= removedFrom);
 }
 
 /** Values already reported, so the log says it once per run, not once per match. */
@@ -208,9 +211,9 @@ export async function saveCrawledMatches(
     { renamePlayers = true }: { renamePlayers?: boolean } = {},
 ) {
     const all = matches;
-    matches = all.filter((m) => !isNonHomMap(m.map));
+    matches = all.filter((m) => !isNonHomMap(m.map, seasonId));
     const nonHom = all.length - matches.length;
-    if (nonHom > 0) logger.info(`${nonHom} match(es) skipped: map only played outside HoM`);
+    if (nonHom > 0) logger.info(`${nonHom} match(es) skipped: map not in the HoM pool that season`);
     if (matches.length === 0) return { inserted: 0, invalid: 0, nonHom };
     warnUnknownValues(matches);
     await loadCodeBook();

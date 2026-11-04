@@ -27,12 +27,13 @@ export const NON_HOM_MAPS: ReadonlySet<string> = new Set([
     'inthewall',
     'islandbase',
     'mayan',
-    'park',
-    'thinice',
 ]);
-// seasons where filter was down/non-existant?
-// 16-20, 39-42 (ids)
-export const NON_HOM_MAPS_SEASON = {
-    29: ['upontheroof'],
-    43: ['park'],
-} as const;
+/**
+ * Maps taken out of the HoM pool (map key: first season id without it). From that season on
+ * they are only played outside HoM, so their matches are dropped like NON_HOM_MAPS.
+ */
+export const HOM_MAP_REMOVED_SEASON: Readonly<Record<string, number>> = {
+    upontheroof: 29,
+    thinice: 41,
+    park: 43,
+};

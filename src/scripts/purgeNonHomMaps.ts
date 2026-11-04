@@ -1,5 +1,6 @@
 /**
- * Delete stored matches played on maps that are never in Hall of Masters (NON_HOM_MAPS).
+ * Delete stored matches played on maps out of the Hall of Masters pool that season
+ * (NON_HOM_MAPS always, HOM_MAP_REMOVED_SEASON from the season they left the pool).
  * New matches on them are already skipped when saved; this cleans up what came in before.
  * bun run src/scripts/purgeNonHomMaps.ts [--season=46] [--dry-run]
  */
@@ -20,29 +21,28 @@ const onlySeason = args.season !== undefined ? Number(args.season) : undefined;
 await connectDB();
 await loadCodeBook();
 
-const maps = namesOf('map').filter(isNonHomMap);
-const codes = maps.map((m) => codeOf('map', m)).filter((c): c is number => c !== undefined);
-console.log(`Non-HoM map ids in the code book: ${maps.join(', ') || 'none'}`);
-
-if (codes.length > 0) {
-    const seasons = onlySeason !== undefined ? [onlySeason] : await listMatchSeasons();
-    let total = 0;
-    for (const seasonId of seasons) {
-        for (const code of codes) {
-            const filter = { $expr: { $in: [mapExpr, [code]] } };
-            const n = dryRun
-                ? await collection(seasonId).countDocuments(filter)
-                : (await collection(seasonId).deleteMany(filter)).deletedCount;
-            total += n;
-            if (n > 0) {
-                console.log(
-                    `Season ${seasonId}, ${findName('map', code)}: ${n} match(es) ${dryRun ? 'to delete' : 'deleted'}`,
-                );
-            }
+const maps = namesOf('map');
+const seasons = onlySeason !== undefined ? [onlySeason] : await listMatchSeasons();
+let total = 0;
+for (const seasonId of seasons) {
+    const codes = maps
+        .filter((m) => isNonHomMap(m, seasonId))
+        .map((m) => codeOf('map', m))
+        .filter((c): c is number => c !== undefined);
+    for (const code of codes) {
+        const filter = { $expr: { $eq: [mapExpr, code] } };
+        const n = dryRun
+            ? await collection(seasonId).countDocuments(filter)
+            : (await collection(seasonId).deleteMany(filter)).deletedCount;
+        total += n;
+        if (n > 0) {
+            console.log(
+                `Season ${seasonId}, ${findName('map', code)}: ${n} match(es) ${dryRun ? 'to delete' : 'deleted'}`,
+            );
         }
     }
-    console.log(`${dryRun ? 'Would delete' : 'Deleted'} ${total} match(es)`);
 }
+console.log(`${dryRun ? 'Would delete' : 'Deleted'} ${total} match(es)`);
 
 await mongoose.disconnect();
 process.exit(0);
