@@ -4,7 +4,7 @@
  * bun run src/scripts/purgeNonHomMaps.ts [--season=46] [--dry-run]
  */
 import mongoose from 'mongoose';
-import { codeOf, loadCodeBook, namesOf } from '@/services/codeBook';
+import { codeOf, findName, loadCodeBook, namesOf } from '@/services/codeBook';
 import connectDB from '@/services/database';
 import { collection, isNonHomMap, listMatchSeasons, mapExpr } from '@/services/matchStore';
 
@@ -36,7 +36,7 @@ if (codes.length > 0) {
             total += n;
             if (n > 0) {
                 console.log(
-                    `Season ${seasonId}, ${code}: ${n} match(es) ${dryRun ? 'to delete' : 'deleted'}`,
+                    `Season ${seasonId}, ${findName('map', code)}: ${n} match(es) ${dryRun ? 'to delete' : 'deleted'}`,
                 );
             }
         }
