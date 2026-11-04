@@ -105,10 +105,58 @@ export function getRankHistory(userId: NkUserId) {
 }
 
 /**
- * The names a player went by other than `currentName`, newest first. The order is the code
- * book's (`o` oldest to newest, then `n`); seasons come from the leaderboards, the only data
- * that keeps the name a player had at the time. A name on no leaderboard gets the seasons of
- * the dated names around it as bounds.
+ * Indexes of the longest run of `seasons` (undefined = undated, skipped) that never goes back
+ * in time: the dated names that agree with the order they were recorded in.
+ */
+function inOrderIndexes(seasons: (number | undefined)[]): Set<number> {
+    const dated = seasons.flatMap((s, i) => (s === undefined ? [] : [{ i, s }]));
+    const length = dated.map(() => 1);
+    const previous = dated.map(() => -1);
+    for (let b = 0; b < dated.length; b++) {
+        for (let a = 0; a < b; a++) {
+            if (dated[a]!.s <= dated[b]!.s && length[a]! + 1 > length[b]!) {
+                length[b] = length[a]! + 1;
+                previous[b] = a;
+            }
+        }
+    }
+    const kept = new Set<number>();
+    let at = length.indexOf(Math.max(0, ...length));
+    while (at !== -1) {
+        kept.add(dated[at]!.i);
+        at = previous[at]!;
+    }
+    return kept;
+}
+
+/**
+ * The player's old names, oldest first. `o` is in the order names were recorded, which is
+ * right for the ones we watched live, but an import of old seasons appends its names at the
+ * end (rename: false). So the dated names that agree with that order stay as they are, names
+ * on no leaderboard keep their place among them, and the dated names that don't agree (or
+ * aren't in the code book) are moved after the last dated name of an earlier or same season.
+ */
+function orderNames(recorded: string[], latestOf: (name: string) => number | undefined) {
+    const kept = inOrderIndexes(recorded.map(latestOf));
+    const order = recorded.filter((name, i) => latestOf(name) === undefined || kept.has(i));
+    const moved = recorded.filter((name, i) => latestOf(name) !== undefined && !kept.has(i));
+    for (const name of moved.sort((a, b) => latestOf(a)! - latestOf(b)!)) {
+        const latest = latestOf(name)!;
+        let after = -1;
+        order.forEach((other, i) => {
+            const season = latestOf(other);
+            if (season !== undefined && season <= latest) after = i;
+        });
+        order.splice(after + 1, 0, name);
+    }
+    return order;
+}
+
+/**
+ * The names a player went by other than `currentName`, newest first. Seasons come from the
+ * leaderboards, the only data that keeps the name a player had at the time; the order is the
+ * code book's, fixed by those seasons (orderNames). A name on no leaderboard gets the seasons
+ * of the dated names around it as bounds.
  */
 export function getNameHistory(userId: NkUserId, currentName: string): PastName[] {
     const seasonsOf = new Map<string, number[]>();
@@ -118,16 +166,13 @@ export function getNameHistory(userId: NkUserId, currentName: string): PastName[
     }
     for (const seasons of seasonsOf.values()) seasons.sort((a, b) => b - a);
 
-    const timeline = nameTimelineOf(userId).filter(
-        (name) => name !== currentName && name !== 'Unknown player',
-    );
-    // a name ranked under but missing from the code book: by its seasons, before the first
-    // later one (shouldn't happen, ensurePlayers records every leaderboard name)
-    for (const [name, seasons] of seasonsOf) {
-        if (name === currentName || name === 'Unknown player' || timeline.includes(name)) continue;
-        const later = timeline.findIndex((n) => (seasonsOf.get(n)?.at(-1) ?? -1) > seasons[0]!);
-        timeline.splice(later === -1 ? timeline.length : later, 0, name);
+    const isOld = (name: string) => name !== currentName && name !== 'Unknown player';
+    const recorded = nameTimelineOf(userId).filter(isOld);
+    // a name ranked under but missing from the code book (shouldn't happen): placed by season
+    for (const name of seasonsOf.keys()) {
+        if (isOld(name) && !recorded.includes(name)) recorded.push(name);
     }
+    const timeline = orderNames(recorded, (name) => seasonsOf.get(name)?.[0]);
 
     // the current name's first ranked season bounds the newest old names
     const currentFirst = seasonsOf.get(currentName)?.at(-1);
