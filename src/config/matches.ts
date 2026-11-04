@@ -22,15 +22,15 @@ export const MAX_EX_MAPS = 10;
  * mixes in some non-HoM games we can't tell apart; matches on these maps are dropped at least.
  */
 export const NON_HOM_MAPS: ReadonlySet<string> = new Set([
-    //'bloontoniummines',
-    //'docks',
-    //'inthewall',
-    'islandbase',
-    //'mayan',
+    'mayan',
     //'park',
     //'thinice',
     //'upontheroof',
 ]);
+//'bloontoniummines',
+//'docks',
+//'inthewall',
+//'islandbase',
 
 export const NON_HOM_MAPS_SEASON = {
     43: ['park'],
