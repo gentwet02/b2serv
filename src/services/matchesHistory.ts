@@ -4,7 +4,7 @@ import {
     CRAWL_RETRY_PAUSE_MS,
     MAX_UNSAVED,
     STORE_ATTEMPTS,
-} from '@/config/constants';
+} from '@/config/crawler';
 import { env } from '@/config/environment';
 import { getCachedLeaderboard, getLeaderboardPlayers } from '@/services/leaderboard';
 import { rememberMatchAssets } from '@/services/matchMeta';
@@ -13,7 +13,7 @@ import { processPlayersMatches } from '@/services/ninjakiwi';
 import { getLiveSeason } from '@/services/seasons';
 import { LeaderboardPlayer } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
-import type { CrawlProgress } from '@/types/ninjakiwi';
+import type { CrawlProgress, NkUserId } from '@/types/ninjakiwi';
 import { delay, extractUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 
@@ -78,7 +78,7 @@ function bothInHoM(match: Match, hom: Set<string>) {
 }
 
 /** Players NK did not answer for, by season: read first on the next run. */
-const pendingPlayers = new Map<number, Set<string>>();
+const pendingPlayers = new Map<number, Set<NkUserId>>();
 /** Matches whose write failed, by season: written first on the next run. */
 const unsavedMatches = new Map<number, Map<string, Match>>();
 
@@ -175,7 +175,7 @@ export async function refreshMatchesHistory(): Promise<void> {
     // batches are written one after another, never in parallel
     let writing: Promise<void> = Promise.resolve();
     // the roster read at the start of the run, if the cache were ever missing
-    let startRoster = new Set<string>();
+    let startRoster = new Set<NkUserId>();
 
     function flush(found: Map<string, Match>) {
         // read the flags now, after the matches: picks up leaderboard refreshes during the crawl
@@ -202,7 +202,7 @@ export async function refreshMatchesHistory(): Promise<void> {
     const isStored = (ids: string[]) => findStoredIds(ids, seasonId);
     const hasHistory = (userId: string) => hasStoredMatches(userId, seasonId);
 
-    async function runPass(userIds: string[]) {
+    async function runPass(userIds: NkUserId[]) {
         crawlState.progress = { done: 0, total: userIds.length };
         const result = await processPlayersMatches(userIds, {
             isStored,

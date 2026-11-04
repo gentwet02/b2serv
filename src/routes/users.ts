@@ -1,5 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { getConnInfo } from 'hono/bun';
+import { ERROR_MESSAGES } from '@/config/errors';
+import { MAX_H2H_OPPONENTS } from '@/config/limits';
 import { clanIdOf, getClan } from '@/services/clanStore';
 import { headToHead, opponentsMet, type OpponentInput } from '@/services/h2h';
 import { readLeaderboard, getRankHistory } from '@/services/leaderboard';
@@ -8,9 +10,10 @@ import { getPlayerSeasonRecords, getSeasonStats } from '@/services/matchStore';
 import { getProfileSeason, getStoredProfile } from '@/services/profileStore';
 import { resolveSeasons } from '@/services/ranges';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
+import type { NkUserId } from '@/types/ninjakiwi';
 import { fixAssetUrl, fixProfileAssets } from '@/utils/assets';
-import { BUSY_MESSAGE, isOverloaded } from '@/utils/heavy';
-import { extractUserId } from '@/utils/helpers';
+import { isOverloaded } from '@/utils/heavy';
+import { extractUserId, isNkUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 
 /**
@@ -27,10 +30,8 @@ import { logger } from '@/utils/logger';
  */
 export const users = new Hono();
 
-const USER_ID = /^[a-z0-9]{8,64}$/i;
-
 function invalid(c: Context) {
-    const message = 'Invalid user id';
+    const message = ERROR_MESSAGES.INVALID_USER_ID;
     return c.json({ message, error: message }, 400);
 }
 
@@ -47,7 +48,7 @@ function clientIp(c: Context) {
 
 async function recentMatches(c: Context) {
     const id = c.req.param('id') ?? '';
-    if (!USER_ID.test(id)) return invalid(c);
+    if (!isNkUserId(id)) return invalid(c);
 
     const result = await getLiveMatches(id, clientIp(c));
     switch (result.status) {
@@ -86,7 +87,7 @@ function fixSeasonAssets<T extends { equipped: Record<string, unknown> }>(season
 
 async function storedProfile(c: Context) {
     const id = c.req.param('id') ?? '';
-    if (!USER_ID.test(id)) return invalid(c);
+    if (!isNkUserId(id)) return invalid(c);
     try {
         const stored = await getStoredProfile(id);
         if (!stored) {
@@ -118,7 +119,7 @@ async function storedProfile(c: Context) {
 
 users.get('/:id/season', async (c) => {
     const id = c.req.param('id');
-    if (!USER_ID.test(id)) return invalid(c);
+    if (!isNkUserId(id)) return invalid(c);
     const seasonParam = c.req.query('season');
     const season = seasonParam ? getSeasonById(Number(seasonParam)) : getLiveSeason();
     if (!season) {
@@ -146,8 +147,6 @@ users.get('/:id/season', async (c) => {
     }
 });
 
-const MAX_OPPONENTS = 10;
-
 /**
  * GET /users/:id/compare: the player's games against each opponent (head to head)
  *   ?season=46 | all      default: live season; "all" = every stored season
@@ -155,7 +154,7 @@ const MAX_OPPONENTS = 10;
  */
 users.get('/:id/compare', async (c) => {
     const id = c.req.param('id');
-    if (!USER_ID.test(id)) return invalid(c);
+    if (!isNkUserId(id)) return invalid(c);
     const seasonParam = c.req.query('season');
     const all = seasonParam === 'all';
     const live = getLiveSeason();
@@ -170,9 +169,9 @@ users.get('/:id/compare', async (c) => {
             (c.req.query('with') ?? '')
                 .split(',')
                 .map((s) => s.trim())
-                .filter((s) => USER_ID.test(s) && s !== id),
+                .filter((s): s is NkUserId => isNkUserId(s) && s !== id),
         ),
-    ].slice(0, MAX_OPPONENTS);
+    ].slice(0, MAX_H2H_OPPONENTS);
 
     try {
         // ranks and default opponents: the season's leaderboard, the live one for "all"
@@ -184,7 +183,7 @@ users.get('/:id/compare', async (c) => {
                 { rank: i + 1, name: p.displayName },
             ]),
         );
-        function input(userId: string): OpponentInput {
+        function input(userId: NkUserId): OpponentInput {
             return {
                 userId,
                 rank: board.get(userId)?.rank ?? null,
@@ -198,7 +197,7 @@ users.get('/:id/compare', async (c) => {
                 const message = "The leaderboard isn't available yet. Try again in a minute.";
                 return c.json({ message, error: message }, 503);
             }
-            opponents = [...board.keys()].filter((u) => u !== id).slice(0, MAX_OPPONENTS);
+            opponents = [...board.keys()].filter((u) => u !== id).slice(0, MAX_H2H_OPPONENTS);
         }
 
         const data = await headToHead(season?.seasonId ?? null, id, opponents.map(input));
@@ -212,7 +211,7 @@ users.get('/:id/compare', async (c) => {
     } catch (error) {
         if (isOverloaded(error)) {
             c.header('Retry-After', '10');
-            return c.json({ message: BUSY_MESSAGE, error: 'busy' }, 503);
+            return c.json({ message: ERROR_MESSAGES.BUSY, error: 'busy' }, 503);
         }
         logger.error(`Head to head of ${id} failed: ${error}`);
         const message = 'Could not compute the head to head.';
@@ -223,7 +222,7 @@ users.get('/:id/compare', async (c) => {
 /** GET /users/:id/opponents?season=46|all: everyone the player met, most games first. */
 users.get('/:id/opponents', async (c) => {
     const id = c.req.param('id');
-    if (!USER_ID.test(id)) return invalid(c);
+    if (!isNkUserId(id)) return invalid(c);
     const seasons = await resolveSeasons(c.req.query('season'));
     if (!seasons) {
         const message = 'Unknown season';
@@ -239,7 +238,7 @@ users.get('/:id/opponents', async (c) => {
     } catch (error) {
         if (isOverloaded(error)) {
             c.header('Retry-After', '10');
-            return c.json({ message: BUSY_MESSAGE, error: 'busy' }, 503);
+            return c.json({ message: ERROR_MESSAGES.BUSY, error: 'busy' }, 503);
         }
         logger.error(`Opponents of ${id} failed: ${error}`);
         const message = 'Could not list the opponents.';
@@ -250,7 +249,7 @@ users.get('/:id/opponents', async (c) => {
 /** GET /users/:id/seasons: wins, draws, losses per season, newest first (stored matches). */
 users.get('/:id/seasons', async (c) => {
     const id = c.req.param('id');
-    if (!USER_ID.test(id)) return invalid(c);
+    if (!isNkUserId(id)) return invalid(c);
     try {
         c.header('Cache-Control', 'public, max-age=60');
         return c.json({ seasons: await getPlayerSeasonRecords(id) });
@@ -263,7 +262,7 @@ users.get('/:id/seasons', async (c) => {
 
 users.get('/:id/ranks', (c) => {
     const id = c.req.param('id');
-    if (!USER_ID.test(id)) return invalid(c);
+    if (!isNkUserId(id)) return invalid(c);
     return c.json(getRankHistory(id));
 });
 

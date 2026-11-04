@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
+import { MAX_AVATAR_IDS } from '@/config/limits';
 import { requestAvatars } from '@/services/playerData';
+import { isNkUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 
 /**
- * GET /avatars?ids=a,b,c   (at most MAX_IDS ids)
+ * GET /avatars?ids=a,b,c   (at most MAX_AVATAR_IDS ids)
  * { avatars: { id: url }, pending: [id] }
  *
  * `avatars` come from the stored profiles. `pending` is always empty: no request to Ninja Kiwi
@@ -11,18 +13,15 @@ import { logger } from '@/utils/logger';
  */
 export const avatars = new Hono();
 
-const USER_ID = /^[a-z0-9]{8,64}$/i;
-const MAX_IDS = 100;
-
 avatars.get('/', async (c) => {
     const ids = [
         ...new Set(
             (c.req.query('ids') ?? '')
                 .split(',')
                 .map((id) => id.trim())
-                .filter((id) => USER_ID.test(id)),
+                .filter((id) => isNkUserId(id)),
         ),
-    ].slice(0, MAX_IDS);
+    ].slice(0, MAX_AVATAR_IDS);
 
     if (ids.length === 0) {
         const message = 'Give player ids as ?ids=a,b,c';

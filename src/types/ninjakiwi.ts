@@ -1,6 +1,10 @@
+import type { NK_API_BASE_URL } from '@/config/nk';
 import type { Match } from './match';
 
-export type NkApi = `https://data.ninjakiwi.com/battles2/${string}`;
+export type NkApi = `${typeof NK_API_BASE_URL}/${string}`;
+
+/** A user id checked with isNkUserId, or taken from one of NK's own links. */
+export type NkUserId = string & { readonly __brand: 'NkUserId' };
 
 export interface NinjaKiwiResponse<T> {
     body: T;
@@ -53,7 +57,7 @@ export interface CrawlOptions extends StoreLookup {
 export interface CrawlResult {
     matches: Map<string, Match>;
     /** players with a failed request: read them again */
-    failed: string[];
+    failed: NkUserId[];
     /** players whose window overflowed since the last read (see PlayerHistory.gap) */
-    gaps: string[];
+    gaps: NkUserId[];
 }

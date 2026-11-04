@@ -14,13 +14,13 @@
  * the season yet still show the previous one). NK sends "none" there since season 22: "can't check".
  */
 import mongoose from 'mongoose';
-import connectDB from '@/services/database';
 import { playerCodeOf } from '@/services/codeBook';
+import connectDB from '@/services/database';
 import { fetchSeasons } from '@/services/ninjakiwi';
 import { storeReadings, type ProfileReading } from '@/services/profileStore';
 import { toMs, toSeasonId } from '@/services/seasons';
 import type { NkProfileBody } from '@/types/profile';
-import { extractUserId } from '@/utils/helpers';
+import { extractUserId, isNkUserId } from '@/utils/helpers';
 import { readJsonObjects } from '@/utils/readJsonObjects';
 
 interface Snapshot {
@@ -80,7 +80,7 @@ for await (const raw of readJsonObjects(file)) {
     const snap = raw as Snapshot;
     const userId = snap.plid ? extractUserId(snap.plid) : '';
     if (
-        !/^[a-z0-9]{8,64}$/i.test(userId) ||
+        !isNkUserId(userId) ||
         typeof snap.date !== 'number' ||
         !snap.body?.rankedStats
     ) {

@@ -1,3 +1,4 @@
+import { HEAVY_QUERY_MAX_MS } from '@/config/limits';
 import { playerNames } from '@/data/playerNames';
 import { loadCodeBook, playerCodeOf } from '@/services/codeBook';
 import {
@@ -26,7 +27,7 @@ import { describeSide, resolveSides, type FirstSide, type SideSpec } from '@/ser
 import type { HeroPick, MatchSort, StoredMatchDoc } from '@/types/match';
 import type { CompareSeason, CompareSide } from '@/types/season';
 import { cached, createCache } from '@/utils/cache';
-import { heavy, HEAVY_QUERY_MAX_MS } from '@/utils/heavy';
+import { heavy } from '@/utils/heavy';
 import { heroBase, mapFits, type MapVariant } from '@/utils/matchLabels';
 
 /**

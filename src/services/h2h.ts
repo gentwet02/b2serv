@@ -1,3 +1,4 @@
+import { HEAVY_QUERY_MAX_MS } from '@/config/limits';
 import { playerNames } from '@/data/playerNames';
 import { CODE_BITS, loadCodeBook, nameOf, playerCodeOf, playerOf } from '@/services/codeBook';
 import { getAssetUrl } from '@/services/matchMeta';
@@ -11,7 +12,7 @@ import {
 } from '@/services/matchStore';
 import type { StoredMatchDoc } from '@/types/match';
 import { cached } from '@/utils/cache';
-import { heavy, HEAVY_QUERY_MAX_MS } from '@/utils/heavy';
+import { heavy } from '@/utils/heavy';
 import { currentMapId, heroBase, mapBaseKey, mapVariant } from '@/utils/matchLabels';
 
 /**

@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
+import { ERROR_MESSAGES } from '@/config/errors';
 import { getMatchesByUserId } from '@/services/database';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
+import { isNkUserId } from '@/utils/helpers';
 
 export const matches = new Hono();
 
@@ -20,8 +22,8 @@ matches.get('/:id', async (c) => {
     }
 
     const userId = c.req.param('id');
-    if (!/^[a-z0-9]+$/i.test(userId)) {
-        const message = 'Invalid user id';
+    if (!isNkUserId(userId)) {
+        const message = ERROR_MESSAGES.INVALID_USER_ID;
         return c.json({ message, error: { message } }, 400);
     }
 

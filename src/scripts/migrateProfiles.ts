@@ -7,9 +7,10 @@
  * Safe to re-run.
  */
 import mongoose from 'mongoose';
+import { COLLECTIONS } from '@/config/db';
 import connectDB from '@/services/database';
 import { fetchSeasons } from '@/services/ninjakiwi';
-import { PROFILES_COLLECTION, storeReadings, type ProfileReading } from '@/services/profileStore';
+import { storeReadings, type ProfileReading } from '@/services/profileStore';
 import { seasonAt, toSeasonId } from '@/services/seasons';
 import type { NkProfileBody } from '@/types/profile';
 
@@ -40,7 +41,8 @@ async function size(name: string) {
 }
 
 console.log(
-    `Before: ${OLD} ${await size(OLD)}, ${PROFILES_COLLECTION} ${await size(PROFILES_COLLECTION)}`,
+    `Before: ${OLD} ${await size(OLD)},`,
+    `${COLLECTIONS.PROFILES} ${await size(COLLECTIONS.PROFILES)}`,
 );
 
 let readings: ProfileReading[] = [];
@@ -70,7 +72,7 @@ await flush();
 console.log(dryRun ? '\nDRY RUN: nothing written' : '\nDone');
 console.table(counts);
 console.log('Readings per season:', Object.fromEntries(perSeason));
-console.log(`After: ${PROFILES_COLLECTION} ${await size(PROFILES_COLLECTION)}`);
+console.log(`After: ${COLLECTIONS.PROFILES} ${await size(COLLECTIONS.PROFILES)}`);
 
 if (drop && !dryRun) {
     if (counts.stored + counts.skipped < counts.read) {

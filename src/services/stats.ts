@@ -1,3 +1,5 @@
+import { STATS_CUBE_TTL_MS, STATS_MAX_CUBES } from '@/config/cache';
+import { HEAVY_QUERY_MAX_MS } from '@/config/limits';
 import { CODE_BITS, loadCodeBook, nameOf } from '@/services/codeBook';
 import { RESULT_INDEX, type Wld, type WldIndex } from '@/services/h2h';
 import { getAssetUrl } from '@/services/matchMeta';
@@ -9,7 +11,6 @@ import {
     unpackLoadout,
 } from '@/services/matchStore';
 import { getLiveSeason } from '@/services/seasons';
-import { HEAVY_QUERY_MAX_MS } from '@/utils/heavy';
 import { logger } from '@/utils/logger';
 import {
     currentMapId,
@@ -73,8 +74,6 @@ export interface StatsRow {
     record: Wld;
 }
 
-const CUBE_TTL_MS = { live: 10 * 60_000, past: 6 * 60 * 60_000 };
-const MAX_CUBES = 200;
 /** Strats sent back, most played first. */
 const MAX_LOADOUTS = 500;
 
@@ -150,10 +149,10 @@ function seasonCube({
     const promise = buildCube(seasonId, codes, against ?? null, opponent ?? null)
         .then((rows) => {
             const live = getLiveSeason()?.seasonId === seasonId;
-            if (cubeCache.size >= MAX_CUBES) cubeCache.clear();
+            if (cubeCache.size >= STATS_MAX_CUBES) cubeCache.clear();
             cubeCache.set(key, {
                 rows,
-                expires: Date.now() + (live ? CUBE_TTL_MS.live : CUBE_TTL_MS.past),
+                expires: Date.now() + (live ? STATS_CUBE_TTL_MS.live : STATS_CUBE_TTL_MS.past),
             });
             const ms = Date.now() - started;
             if (ms > 2000) logger.warn(`Slow stats cube ${key} (${ms}ms, ${rows.length} rows)`);
@@ -505,10 +504,10 @@ export async function opponentOptions(query: OpponentOptionsQuery) {
             if (hit && hit.expires > Date.now()) return hit.rows;
             const rows = await buildOpponentCube(g.seasonId, g.codes ?? [], g.against ?? null, query.own);
             const live = getLiveSeason()?.seasonId === g.seasonId;
-            if (opponentCubes.size >= MAX_CUBES) opponentCubes.clear();
+            if (opponentCubes.size >= STATS_MAX_CUBES) opponentCubes.clear();
             opponentCubes.set(key, {
                 rows,
-                expires: Date.now() + (live ? CUBE_TTL_MS.live : CUBE_TTL_MS.past),
+                expires: Date.now() + (live ? STATS_CUBE_TTL_MS.live : STATS_CUBE_TTL_MS.past),
             });
             return rows;
         },

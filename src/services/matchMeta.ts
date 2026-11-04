@@ -1,4 +1,5 @@
 import mongoose, { Schema, type Model } from 'mongoose';
+import { COLLECTIONS } from '@/config/db';
 import type { Match } from '@/types/match';
 import { logger } from '@/utils/logger';
 
@@ -16,7 +17,7 @@ const assetSchema = new Schema<AssetDoc>(
         key: { type: String, required: true },
         url: { type: String, required: true },
     },
-    { collection: 'nk_assets', versionKey: false },
+    { collection: COLLECTIONS.NK_ASSETS, versionKey: false },
 );
 assetSchema.index({ kind: 1, key: 1 }, { unique: true });
 

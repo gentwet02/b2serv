@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { COLLECTIONS, MATCHES_COLLECTION_NAME } from '@/config/db';
 import { env } from '@/config/environment';
 import { listStoredSeasonIds } from '@/services/leaderboardStore';
 import { fetchSeasons } from '@/services/ninjakiwi';
@@ -36,7 +37,7 @@ function loadStoredIds(): Promise<Set<number>> {
         if (!db) throw new Error('database not connected');
         const ids = new Set<number>(await listStoredSeasonIds());
         for (const { name } of await db.listCollections({}, { nameOnly: true }).toArray()) {
-            const match = name.match(/^matches_s(\d+)$/);
+            const match = name.match(MATCHES_COLLECTION_NAME);
             if (match) ids.add(Number(match[1]));
         }
         return ids;
@@ -52,7 +53,7 @@ async function archivedSeason(seasonId: number): Promise<SeasonInfo> {
     const cached = archivedCache.get(seasonId);
     if (cached) return cached;
 
-    const matches = mongoose.connection.collection<{ t: number }>(`matches_s${seasonId}`);
+    const matches = mongoose.connection.collection<{ t: number }>(COLLECTIONS.MATCHES(seasonId));
     const [first, last] = await Promise.all([
         matches
             .find({}, { projection: { t: 1 } })

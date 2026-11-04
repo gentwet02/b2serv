@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
-import { COLLECTIONS } from '@/config/constants';
+import { COLLECTIONS } from '@/config/db';
+import { NK_USER_URL_PREFIX } from '@/config/nk';
 import { ensurePlayers, loadCodeBook, playerCodeOf, playerOf } from '@/services/codeBook';
 import type { LeaderboardPlayer } from '@/types/leaderboard';
 import { extractUserId } from '@/utils/helpers';
@@ -38,7 +39,6 @@ interface LeaderboardDoc {
 }
 
 const SEP = '\u001f';
-const profileUrl = (userId: string) => `https://data.ninjakiwi.com/battles2/users/${userId}`;
 const collection = () => mongoose.connection.collection<LeaderboardDoc>(COLLECTIONS.LEADERBOARDS);
 
 let indexed: Promise<unknown> | null = null;
@@ -107,7 +107,7 @@ function decode(doc: LeaderboardDoc): StoredLeaderboard {
             displayName: names[i] ?? player?.n ?? 'Unknown player',
             score: s.readInt32LE(i * 4),
             currentlyInHoM: (((h[i >> 3] ?? 0) >> (i & 7)) & 1) === 1,
-            profile: profileUrl(player?.u ?? ''),
+            profile: `${NK_USER_URL_PREFIX}${player?.u ?? ''}`,
         });
     }
     if (missing > 0)

@@ -3,7 +3,7 @@
  *   bun run src/scripts/migrateLeaderboards.ts [--dry-run]
  */
 import mongoose from 'mongoose';
-import { COLLECTIONS } from '@/config/constants';
+import { COLLECTIONS } from '@/config/db';
 import connectDB from '@/services/database';
 import { storeLeaderboard } from '@/services/leaderboardStore';
 import type { LeaderboardPlayer } from '@/types/leaderboard';

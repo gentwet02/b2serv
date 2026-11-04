@@ -1,12 +1,19 @@
 import { env } from '@/config/environment';
+import { NK_USER_ID, NK_USER_URL_PREFIX } from '@/config/nk';
+import type { NkUserId } from '@/types/ninjakiwi';
 import { logger } from './logger';
 
 export function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function extractUserId(profileUrl: string): string {
-    return profileUrl.replace('https://data.ninjakiwi.com/battles2/users/', '');
+export function isNkUserId(id: string): id is NkUserId {
+    return NK_USER_ID.test(id);
+}
+
+/** NK's own profile links are trusted: the id isn't checked again. */
+export function extractUserId(profileUrl: string): NkUserId {
+    return profileUrl.replace(NK_USER_URL_PREFIX, '') as NkUserId;
 }
 
 // ---------------------------------------------------------------------------

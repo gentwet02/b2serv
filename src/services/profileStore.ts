@@ -1,4 +1,6 @@
 import mongoose from 'mongoose';
+import { PROFILES_MAX_CACHED } from '@/config/cache';
+import { COLLECTIONS } from '@/config/db';
 import {
     ensureCodes,
     ensurePlayers,
@@ -30,8 +32,7 @@ import { logger } from '@/utils/logger';
  * to Ninja Kiwi, they get what is stored here.
  */
 
-export const PROFILES_COLLECTION = 'player_profiles';
-const collection = () => mongoose.connection.collection<StoredProfileDoc>(PROFILES_COLLECTION);
+const collection = () => mongoose.connection.collection<StoredProfileDoc>(COLLECTIONS.PROFILES);
 
 export const codec: Codec = {
     code(kind, name) {
@@ -42,12 +43,10 @@ export const codec: Codec = {
     name: (kind, code) => findName(kind, code),
 };
 
-/** Decoded documents, by player code. Small: one entry is a few hundred bytes. */
-const MAX_CACHED = 5000;
 const memory = new Map<number, ProfileDoc>();
 function remember(doc: ProfileDoc) {
     memory.delete(doc._id);
-    if (memory.size >= MAX_CACHED) {
+    if (memory.size >= PROFILES_MAX_CACHED) {
         const oldest = memory.keys().next().value;
         if (oldest !== undefined) memory.delete(oldest);
     }

@@ -1,4 +1,6 @@
 import { Hono, type Context } from 'hono';
+import { env } from '@/config/environment';
+import { MAX_MATCHES_PAGE } from '@/config/limits';
 import {
     MATCH_SORTS,
     MAX_EX_HEROES,
@@ -6,8 +8,8 @@ import {
     MAX_EX_TOWERS,
     MAX_HEROES,
     MAX_TOWERS,
-} from '@/config/constants';
-import { env } from '@/config/environment';
+    NAME_PARAM,
+} from '@/config/matches';
 import { crawlState, nextCrawlInMs, refreshMatchesHistory } from '@/services/matchesHistory';
 import {
     canUseSameSide,
@@ -19,7 +21,7 @@ import {
 } from '@/services/matchStore';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
 import type { FacetFilter, HeroPick, MatchSort } from '@/types/match';
-import { getNkClientStats } from '@/utils/helpers';
+import { getNkClientStats, isNkUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 import { scheduleEvery } from '@/utils/scheduler';
 
@@ -30,15 +32,13 @@ function clampInt(value: string | undefined, fallback: number, min: number, max:
     return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
 }
 
-const NAME = /^[A-Za-z0-9_]{1,40}$/;
-
 function list(value: string | undefined, max: number) {
     return [
         ...new Set(
             (value ?? '')
                 .split(',')
                 .map((v) => v.trim())
-                .filter((v) => NAME.test(v)),
+                .filter((v) => NAME_PARAM.test(v)),
         ),
     ].slice(0, max);
 }
@@ -47,7 +47,7 @@ function parseHeroes(value: string | undefined, max = MAX_HEROES): HeroPick[] {
     const picks: HeroPick[] = [];
     for (const item of (value ?? '').split(',')) {
         const [base, hero] = item.trim().split(':');
-        if (!base || !NAME.test(base) || (hero && !NAME.test(hero))) continue;
+        if (!base || !NAME_PARAM.test(base) || (hero && !NAME_PARAM.test(hero))) continue;
         if (picks.some((p) => p.base === base)) continue;
         picks.push(hero ? { base, hero } : { base });
         if (picks.length === max) break;
@@ -92,7 +92,7 @@ function parseFilter(c: Context, seasonId: number | null): FacetFilter {
     return {
         seasonId,
         player: c.req.query('player')?.trim().slice(0, 64) || undefined,
-        playerId: playerId && /^[a-z0-9]{8,64}$/i.test(playerId) ? playerId : undefined,
+        playerId: playerId && isNkUserId(playerId) ? playerId : undefined,
         heroes: parseHeroes(c.req.query('heroes')),
         towers: list(c.req.query('towers'), MAX_TOWERS),
         map: cleanMap(c.req.query('map')),
@@ -145,7 +145,7 @@ matchesHistory.get('/', async (c) => {
     const filter = {
         ...parseFilter(c, season.seasonId),
         offset: clampInt(c.req.query('offset'), 0, 0, 100_000),
-        limit: clampInt(c.req.query('limit'), 20, 1, 50),
+        limit: clampInt(c.req.query('limit'), 20, 1, MAX_MATCHES_PAGE),
         sort: (MATCH_SORTS as readonly string[]).includes(sort) ? (sort as MatchSort) : 'newest',
     };
 

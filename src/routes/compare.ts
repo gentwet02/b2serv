@@ -1,8 +1,10 @@
 import { Hono, type Context } from 'hono';
-import { MATCH_SORTS } from '@/config/constants';
+import { ERROR_MESSAGES } from '@/config/errors';
+import { MAX_COMPARE_GAMES_PAGE } from '@/config/limits';
+import { MATCH_SORTS } from '@/config/matches';
 import { runCompare, runCompareGames } from '@/services/compare';
 import type { MatchSort } from '@/types/match';
-import { BUSY_MESSAGE, isOverloaded } from '@/utils/heavy';
+import { isOverloaded } from '@/utils/heavy';
 import { logger } from '@/utils/logger';
 import { parseLoadoutFilter, parseMapFocus, parseOverlap, parseSides } from '@/utils/params';
 
@@ -14,11 +16,8 @@ const fail = (c: Context, message: string, status: 400 | 404 | 500) =>
 /** Too much running (or a read that ran out of time): a 503 the client can retry. */
 function busy(c: Context) {
     c.header('Retry-After', '10');
-    return c.json({ message: BUSY_MESSAGE, error: 'busy' }, 503);
+    return c.json({ message: ERROR_MESSAGES.BUSY, error: 'busy' }, 503);
 }
-
-/** At most this many games a page. */
-const GAMES_PAGE_MAX = 50;
 
 /** The sides, the shared players rule and the filters, as /stats reads them. */
 function readQuery(c: Context) {
@@ -80,7 +79,10 @@ compare.get('/games', async (c) => {
         ? (sortParam as MatchSort)
         : 'newest';
     const offset = Math.max(0, Math.floor(Number(c.req.query('offset')) || 0));
-    const limit = Math.min(GAMES_PAGE_MAX, Math.max(1, Math.floor(Number(c.req.query('limit')) || 30)));
+    const limit = Math.min(
+        MAX_COMPARE_GAMES_PAGE,
+        Math.max(1, Math.floor(Number(c.req.query('limit')) || 30)),
+    );
     try {
         const data = await runCompareGames(c.req.query('season'), read.a, read.b, {
             ...read.options,

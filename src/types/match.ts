@@ -1,5 +1,5 @@
 import type mongoose from 'mongoose';
-import type { MATCH_SORTS } from '@/config/constants';
+import type { MATCH_SORTS } from '@/config/matches';
 
 export interface MatchPlayer {
     displayName: string;

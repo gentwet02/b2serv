@@ -1,12 +1,18 @@
 import {
-    NK_API,
-    MAX_SEASON_PAGES,
     MAX_LEADERBOARD_PAGES,
+    MAX_SEASON_PAGES,
     PLAYER_FETCH_CONCURRENCY,
-} from '@/config/constants';
+} from '@/config/crawler';
+import { NK_API } from '@/config/nk';
 import type { LeaderboardPlayer, LeadrboardResponse } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
-import type { CrawlOptions, CrawlResult, HistoryOptions, PlayerHistory } from '@/types/ninjakiwi';
+import type {
+    CrawlOptions,
+    CrawlResult,
+    HistoryOptions,
+    NkUserId,
+    PlayerHistory,
+} from '@/types/ninjakiwi';
 import type { PlayerMatchesResponse } from '@/types/player';
 import type { Season, SeasonsResponse } from '@/types/season';
 import { fetchWithRetry, type Priority } from '@/utils/helpers';
@@ -114,7 +120,7 @@ export async function fetchLeaderboard(
 // ---------------------------------------------------------------------------
 
 /** null: NK did not answer, even after retries. */
-async function fetchMatches(userId: string): Promise<PlayerMatchesResponse | null> {
+async function fetchMatches(userId: NkUserId): Promise<PlayerMatchesResponse | null> {
     const data: PlayerMatchesResponse | null = await fetchWithRetry(NK_API.PLAYER_MATCHES(userId), {
         priority: 'low',
         retries: 4,
@@ -132,7 +138,7 @@ async function fetchMatches(userId: string): Promise<PlayerMatchesResponse | nul
 }
 
 export async function fetchPlayerHistory(
-    userId: string,
+    userId: NkUserId,
     { isStored, hasHistory, filter }: HistoryOptions,
 ): Promise<PlayerHistory> {
     const data = await fetchMatches(userId);
@@ -168,7 +174,7 @@ async function forEachWithConcurrency<T>(
 }
 
 export async function processPlayersMatches(
-    userIds: string[],
+    userIds: NkUserId[],
     options: CrawlOptions,
 ): Promise<CrawlResult> {
     const {
@@ -180,8 +186,8 @@ export async function processPlayersMatches(
     } = options;
 
     const matches = new Map<string, Match>();
-    const failed: string[] = [];
-    const gaps: string[] = [];
+    const failed: NkUserId[] = [];
+    const gaps: NkUserId[] = [];
     let done = 0;
     let lastReport = 0;
 

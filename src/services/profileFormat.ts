@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { NK_ASSET_URL_PREFIX, NK_GUILD_URL_PREFIX } from '@/config/nk';
 import type { ProfileCodeKind } from '@/services/codeBook';
 import type {
     NkBadge,
@@ -30,14 +31,13 @@ export interface Codec {
     name(kind: ProfileCodeKind, code: number): string | undefined;
 }
 
-export const ASSET_PREFIX = 'https://static-api.nkstatic.com/appdocs/4/assets/opendata/';
-const GUILD_PREFIX = 'https://data.ninjakiwi.com/battles2/guild/';
 const BADGE_SEP = '\u001f';
 
 /** NK's asset link → what we code: the file name when it's on NK's usual host. */
 export const assetKey = (url: string) =>
-    url.startsWith(ASSET_PREFIX) ? url.slice(ASSET_PREFIX.length) : url;
-export const assetUrl = (key: string) => (/^https?:\/\//.test(key) ? key : ASSET_PREFIX + key);
+    url.startsWith(NK_ASSET_URL_PREFIX) ? url.slice(NK_ASSET_URL_PREFIX.length) : url;
+export const assetUrl = (key: string) =>
+    /^https?:\/\//.test(key) ? key : NK_ASSET_URL_PREFIX + key;
 /** "e00f…_mastery_spikefactory_avatar.png" → "mastery_spikefactory_avatar" */
 export const assetName = (key: string) =>
     (key.split('/').pop() ?? key).replace(/^[0-9a-f]{32}_/i, '').replace(/\.[a-z0-9]+$/i, '');
@@ -104,7 +104,7 @@ function readBadge(item: unknown): { season: number | null; key: string } | null
 }
 
 const guildKey = (url: string) =>
-    url.startsWith(GUILD_PREFIX) ? url.slice(GUILD_PREFIX.length) : url;
+    url.startsWith(NK_GUILD_URL_PREFIX) ? url.slice(NK_GUILD_URL_PREFIX.length) : url;
 
 /** Every name a profile needs a code for, by kind. */
 export function profileNames(body: NkProfileBody): Map<ProfileCodeKind, Set<string>> {
@@ -527,7 +527,7 @@ export function decodeProfile(doc: ProfileDoc, displayName: string, codec: Codec
         lifetime_highestArenaIndex: a[6] ?? 0,
         arenaLeagueTier: a[7] ?? 0,
         inGuild: (doc.f & 4) !== 0,
-        guild: guild ? GUILD_PREFIX + guild : null,
+        guild: guild ? NK_GUILD_URL_PREFIX + guild : null,
         accolades,
         _bloonStats: bloons,
         _towers: towers,

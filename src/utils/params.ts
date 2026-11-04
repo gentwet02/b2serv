@@ -1,12 +1,11 @@
-import { MAX_EX_HEROES, MAX_EX_MAPS, MAX_EX_TOWERS } from '@/config/constants';
+import { MAX_EX_HEROES, MAX_EX_MAPS, MAX_EX_TOWERS, NAME_PARAM } from '@/config/matches';
 import type { LoadoutFilter } from '@/services/matchStore';
 import { parseExclude, VERSUS_RANGES, type VersusRange } from '@/services/ranges';
 import type { FirstSide, RangeSpec, SideSpec } from '@/services/sides';
+import { isNkUserId } from '@/utils/helpers';
 import { parseMapFilter } from '@/utils/matchLabels';
 
 /** Query parameter readers shared by the stats and compare routes. */
-
-const NAME = /^[A-Za-z0-9_]{1,40}$/;
 
 /** "Druid,Ninja": valid names, each once, at most `max`. */
 export function nameList(value: string | undefined, max: number) {
@@ -15,7 +14,7 @@ export function nameList(value: string | undefined, max: number) {
             (value ?? '')
                 .split(',')
                 .map((t) => t.trim())
-                .filter((t) => NAME.test(t)),
+                .filter((t) => NAME_PARAM.test(t)),
         ),
     ].slice(0, max);
 }
@@ -39,8 +38,8 @@ export function parsedList<T extends { base: string }>(
 /** "Quincy" (any variant) or "Quincy:Quincy_Cyber". */
 export function parseHero(value: string | undefined) {
     const [base, variant] = (value ?? '').split(':');
-    if (!base || !NAME.test(base)) return undefined;
-    return variant && NAME.test(variant) ? { base, hero: variant } : { base };
+    if (!base || !NAME_PARAM.test(base)) return undefined;
+    return variant && NAME_PARAM.test(variant) ? { base, hero: variant } : { base };
 }
 
 type Query = (name: string) => string | undefined;
@@ -63,8 +62,6 @@ export function parseMapFocus(query: Query) {
     };
 }
 
-const USER_ID = /^[a-z0-9]{8,64}$/i;
-
 /** A range of each leaderboard: ?players=t25 (default), &exclude=t10 to leave a smaller one out. */
 function parseRange(range: string | undefined, exclude: string | undefined): RangeSpec {
     const value: VersusRange = (VERSUS_RANGES as readonly string[]).includes(range ?? '')
@@ -82,7 +79,10 @@ function parseRange(range: string | undefined, exclude: string | undefined): Ran
 export function parseSides(query: Query): { a: FirstSide; b: SideSpec } | 'invalid' {
     const player = query('player');
     const player2 = query('player2');
-    if ((player !== undefined && !USER_ID.test(player)) || (player2 !== undefined && !USER_ID.test(player2))) {
+    if (
+        (player !== undefined && !isNkUserId(player)) ||
+        (player2 !== undefined && !isNkUserId(player2))
+    ) {
         return 'invalid';
     }
     if (player && player === player2) return 'invalid';

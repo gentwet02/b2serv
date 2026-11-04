@@ -1,12 +1,14 @@
 import { Hono } from 'hono';
-import { MAX_EX_HEROES, MAX_EX_MAPS, MAX_EX_TOWERS } from '@/config/constants';
+import { STATS_RESPONSE_TTL_MS } from '@/config/cache';
+import { ERROR_MESSAGES } from '@/config/errors';
+import { MAX_EX_HEROES, MAX_EX_MAPS, MAX_EX_TOWERS } from '@/config/matches';
 import { loadCodeBook, playerCodeOf } from '@/services/codeBook';
 import { isEmptyLoadoutFilter, loadoutExpr, type LoadoutFilter } from '@/services/matchStore';
 import { seasonScope } from '@/services/ranges';
 import { describeSide, isAnyone, resolveSides, sideKey } from '@/services/sides';
 import { computeStats, opponentOptions, type StatsSeasonGroup } from '@/services/stats';
 import type { CompareSide } from '@/types/season';
-import { BUSY_MESSAGE, heavy, isOverloaded } from '@/utils/heavy';
+import { heavy, isOverloaded } from '@/utils/heavy';
 import { logger } from '@/utils/logger';
 import {
     parseLoadoutFilter,
@@ -17,8 +19,6 @@ import {
 
 export const stats = new Hono();
 
-/** Answers computed in the last 2 minutes (the cubes behind them are cached longer). */
-const RESPONSE_TTL_MS = 2 * 60_000;
 const responses = new Map<string, { data: unknown; expires: number }>();
 
 /**
@@ -169,7 +169,7 @@ stats.get('/', async (c) => {
             missingSeasons: sides.missing,
         };
         if (responses.size >= 150) responses.clear();
-        responses.set(cacheKey, { data: body, expires: Date.now() + RESPONSE_TTL_MS });
+        responses.set(cacheKey, { data: body, expires: Date.now() + STATS_RESPONSE_TTL_MS });
         return body;
         });
         if (!answer) {
@@ -182,7 +182,7 @@ stats.get('/', async (c) => {
         if (isOverloaded(error)) {
             logger.warn(`Stats busy (${cacheKey}): ${error}`);
             c.header('Retry-After', '10');
-            return c.json({ message: BUSY_MESSAGE, error: 'busy' }, 503);
+            return c.json({ message: ERROR_MESSAGES.BUSY, error: 'busy' }, 503);
         }
         logger.error(`Stats failed (${cacheKey}): ${error}`);
         const message = 'Could not compute the stats.';

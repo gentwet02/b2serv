@@ -1,9 +1,15 @@
-import { NK_API } from '@/config/constants';
+import {
+    PROFILE_SWEEP_BATCH,
+    PROFILE_SWEEP_CONCURRENCY,
+    PROFILE_SWEEP_PREVIOUS_SEASON_MS,
+} from '@/config/crawler';
 import { env } from '@/config/environment';
+import { NK_API } from '@/config/nk';
 import { clanIdOf, refreshClans } from '@/services/clanStore';
 import { ensureLeaderboard, getLeaderboardPlayers } from '@/services/leaderboard';
 import { lastReadTimes, storeReadings, type ProfileReading } from '@/services/profileStore';
 import { getLiveSeason, getSeasons, seasonAt, toMs } from '@/services/seasons';
+import type { NkUserId } from '@/types/ninjakiwi';
 import type { NkProfileBody } from '@/types/profile';
 import { learnAssetUrl } from '@/utils/assets';
 import { extractUserId, fetchWithRetry } from '@/utils/helpers';
@@ -21,11 +27,6 @@ import { scheduleEvery } from '@/utils/scheduler';
  * leaderboard only lists who played already, and the others need the reading that starts
  * their new season.
  */
-
-const CONCURRENCY = 2;
-const BATCH = 50;
-/** after a season starts, keep reading the previous season's players this long */
-const PREVIOUS_SEASON_MS = 3 * 24 * 3600_000;
 
 export const sweepState = {
     running: false,
@@ -45,7 +46,7 @@ interface NkProfileAnswer {
     body?: NkProfileBody;
 }
 
-async function playersToRead(): Promise<string[]> {
+async function playersToRead(): Promise<NkUserId[]> {
     const live = getLiveSeason();
     if (!live) return [];
     const ids = new Set(
@@ -53,7 +54,7 @@ async function playersToRead(): Promise<string[]> {
     );
 
     const started = toMs(live.start);
-    if (started > 0 && Date.now() - started < PREVIOUS_SEASON_MS) {
+    if (started > 0 && Date.now() - started < PROFILE_SWEEP_PREVIOUS_SEASON_MS) {
         const previous = getSeasons()
             .filter((s) => s.seasonId < live.seasonId)
             .sort((a, b) => b.seasonId - a.seasonId)[0];
@@ -142,10 +143,10 @@ export async function sweepProfiles(): Promise<void> {
                     date,
                     seasonId: seasonAt(getSeasons(), date.getTime()),
                 });
-                if (pending.length >= BATCH) flush();
+                if (pending.length >= PROFILE_SWEEP_BATCH) flush();
             }
         }
-        await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+        await Promise.all(Array.from({ length: PROFILE_SWEEP_CONCURRENCY }, worker));
         flush();
         await writing;
         logger.info(

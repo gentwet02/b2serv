@@ -1,5 +1,8 @@
 import mongoose from 'mongoose';
-import { NON_HOM_MAPS } from '@/config/constants';
+import { MATCH_OPTIONS_TTL_MS } from '@/config/cache';
+import { COLLECTIONS, MATCHES_COLLECTION_NAME } from '@/config/db';
+import { NON_HOM_MAPS } from '@/config/matches';
+import { NK_USER_URL_PREFIX } from '@/config/nk';
 import { playerNames } from '@/data/playerNames';
 import { HERO_BASES } from '@/data/towers';
 import {
@@ -79,9 +82,8 @@ export const opposingResult: Record<string, string> = {
 // Collections
 // ---------------------------------------------------------------------------
 
-const collectionName = (seasonId: number) => `matches_s${seasonId}`;
 export const collection = (seasonId: number) =>
-    mongoose.connection.collection<StoredMatchDoc>(collectionName(seasonId));
+    mongoose.connection.collection<StoredMatchDoc>(COLLECTIONS.MATCHES(seasonId));
 
 const indexed = new Set<number>();
 async function ensureIndexes(seasonId: number) {
@@ -95,7 +97,7 @@ async function ensureIndexes(seasonId: number) {
         ]);
     } catch (error) {
         indexed.delete(seasonId);
-        logger.error(`Creating indexes on ${collectionName(seasonId)} failed: ${error}`);
+        logger.error(`Creating indexes on ${COLLECTIONS.MATCHES(seasonId)} failed: ${error}`);
     }
 }
 
@@ -283,7 +285,7 @@ async function side(playerCode: number, loadout: number, result: string, terms: 
         towertwo: towers[1],
         towerthree: towers[2],
         result,
-        profileURL: `https://data.ninjakiwi.com/battles2/users/${userId}`,
+        profileURL: `${NK_USER_URL_PREFIX}${userId}`,
         ...oldNameOf(playerCode, terms),
     };
 }
@@ -548,7 +550,6 @@ type Count = { _id: number; n: number };
 /** same player mode: side 1 or side 2; undefined: both players */
 type Slot = 0 | 1 | undefined;
 
-const OPTIONS_TTL_MS = 60_000;
 const optionsCache = new Map<string, { data: FilterOptions; expires: number }>();
 
 /** The seasons a filter reads: one, or every stored season (seasonId null). */
@@ -743,7 +744,7 @@ export async function getFilterOptions(filter: FacetFilter): Promise<FilterOptio
         ).sort((a, b) => a.key.localeCompare(b.key)),
     };
     if (optionsCache.size > 500) optionsCache.clear();
-    optionsCache.set(cacheKey, { data, expires: Date.now() + OPTIONS_TTL_MS });
+    optionsCache.set(cacheKey, { data, expires: Date.now() + MATCH_OPTIONS_TTL_MS });
     return data;
 }
 
@@ -794,7 +795,7 @@ export async function queryMatches(filter: MatchesFilter) {
             : [
                   ...branch(first!),
                   ...others.map((id) => ({
-                      $unionWith: { coll: collectionName(id), pipeline: branch(id) },
+                      $unionWith: { coll: COLLECTIONS.MATCHES(id), pipeline: branch(id) },
                   })),
                   sort,
                   { $skip: filter.offset },
@@ -1048,7 +1049,7 @@ export async function listMatchSeasons(): Promise<number[]> {
     if (!db) return [];
     const names = await db.listCollections({}, { nameOnly: true }).toArray();
     const ids = names
-        .map((c) => /^matches_s(\d+)$/.exec(c.name)?.[1])
+        .map((c) => MATCHES_COLLECTION_NAME.exec(c.name)?.[1])
         .filter((id): id is string => id !== undefined)
         .map(Number)
         .sort((a, b) => a - b);
@@ -1071,7 +1072,7 @@ export async function getStorageReport() {
         );
         const matchCollections = await Promise.all(
             names
-                .filter((n) => /^matches_s\d+$/.test(n))
+                .filter((n) => MATCHES_COLLECTION_NAME.test(n))
                 .map(async (name) => ({
                     name,
                     matches: await db.collection(name).estimatedDocumentCount(),

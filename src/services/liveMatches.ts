@@ -1,5 +1,8 @@
-import { NK_API } from '@/config/constants';
+import { LIVE_MATCHES_MAX_CACHED } from '@/config/cache';
+import { LIVE_GLOBAL_PER_MINUTE, LIVE_IP_COOLDOWN_MS, LIVE_PLAYER_FRESH_MS } from '@/config/limits';
+import { NK_API } from '@/config/nk';
 import { loadCodeBook, playerCodeOf } from '@/services/codeBook';
+import type { NkUserId } from '@/types/ninjakiwi';
 import { fetchWithRetry } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 
@@ -7,17 +10,12 @@ import { logger } from '@/utils/logger';
  * A player's latest matches straight from Ninja Kiwi: the only NK request a visitor can cause
  * (fallback for players with no stored match this season). Bounded so it can't be spammed:
  *  - only players we already know (player_codes): no random ids;
- *  - one NK read per player per PLAYER_FRESH_MS, everyone else gets that copy;
- *  - at most GLOBAL_PER_MINUTE NK reads per minute for all visitors together;
- *  - at most one new NK read per IP_COOLDOWN_MS per visitor IP.
+ *  - one NK read per player per LIVE_PLAYER_FRESH_MS, everyone else gets that copy;
+ *  - at most LIVE_GLOBAL_PER_MINUTE NK reads per minute for all visitors together;
+ *  - at most one new NK read per LIVE_IP_COOLDOWN_MS per visitor IP.
  * Over a limit, the last copy is served if there is one, otherwise a "busy" answer.
- * At worst this adds GLOBAL_PER_MINUTE requests a minute to NK, whatever visitors do.
+ * At worst this adds LIVE_GLOBAL_PER_MINUTE requests a minute to NK, whatever visitors do.
  */
-
-const PLAYER_FRESH_MS = 10 * 60_000;
-const GLOBAL_PER_MINUTE = 20;
-const IP_COOLDOWN_MS = 10_000;
-const MAX_CACHED = 2000;
 
 export interface NkMatchesAnswer {
     success: boolean;
@@ -43,7 +41,7 @@ const lastReadByIp = new Map<string, number>();
 
 function remember(userId: string, entry: Entry) {
     cache.delete(userId);
-    if (cache.size >= MAX_CACHED) {
+    if (cache.size >= LIVE_MATCHES_MAX_CACHED) {
         const oldest = cache.keys().next().value;
         if (oldest !== undefined) cache.delete(oldest);
     }
@@ -52,20 +50,22 @@ function remember(userId: string, entry: Entry) {
 
 function globalWaitMs(now: number) {
     while (recentReads.length > 0 && now - recentReads[0]! >= 60_000) recentReads.shift();
-    return recentReads.length < GLOBAL_PER_MINUTE ? 0 : 60_000 - (now - recentReads[0]!);
+    return recentReads.length < LIVE_GLOBAL_PER_MINUTE ? 0 : 60_000 - (now - recentReads[0]!);
 }
 
 function ipWaitMs(ip: string, now: number) {
     const last = lastReadByIp.get(ip);
-    return last === undefined ? 0 : Math.max(0, last + IP_COOLDOWN_MS - now);
+    return last === undefined ? 0 : Math.max(0, last + LIVE_IP_COOLDOWN_MS - now);
 }
 
 function pruneIps(now: number) {
     if (lastReadByIp.size < 5000) return;
-    for (const [ip, at] of lastReadByIp) if (now - at >= IP_COOLDOWN_MS) lastReadByIp.delete(ip);
+    for (const [ip, at] of lastReadByIp) {
+        if (now - at >= LIVE_IP_COOLDOWN_MS) lastReadByIp.delete(ip);
+    }
 }
 
-function read(userId: string): Promise<Entry | null> {
+function read(userId: NkUserId): Promise<Entry | null> {
     const running = inFlight.get(userId);
     if (running) return running;
     const job = fetchWithRetry<NkMatchesAnswer>(NK_API.PLAYER_MATCHES(userId), {
@@ -88,10 +88,12 @@ function read(userId: string): Promise<Entry | null> {
     return job;
 }
 
-export async function getLiveMatches(userId: string, ip: string): Promise<LiveMatchesResult> {
+export async function getLiveMatches(userId: NkUserId, ip: string): Promise<LiveMatchesResult> {
     const now = Date.now();
     const cached = cache.get(userId);
-    if (cached && now - cached.fetchedAt < PLAYER_FRESH_MS) return { status: 'ok', entry: cached };
+    if (cached && now - cached.fetchedAt < LIVE_PLAYER_FRESH_MS) {
+        return { status: 'ok', entry: cached };
+    }
 
     // someone is already reading this player: share that read, it costs nothing more
     const running = inFlight.get(userId);

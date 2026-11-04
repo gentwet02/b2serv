@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
-import { NK_API } from '@/config/constants';
+import { CLAN_FETCH_CONCURRENCY, CLAN_REFRESH_MS } from '@/config/crawler';
+import { COLLECTIONS } from '@/config/db';
+import { NK_API } from '@/config/nk';
 import { playerCodeOf, playerOf } from '@/services/codeBook';
 import { assetKey, assetUrl } from '@/services/profileFormat';
 import { fixAssetUrl } from '@/utils/assets';
@@ -11,11 +13,6 @@ import { logger } from '@/utils/logger';
  * Read by the profile sweep for the clans of the players it reads, at most once a day each:
  * visitors never cause a request to Ninja Kiwi.
  */
-
-export const CLANS_COLLECTION = 'clans';
-/** a clan is read again once its last reading is this old */
-const REFRESH_MS = 24 * 3600_000;
-const CONCURRENCY = 2;
 
 /** NK's guild answer, the fields we keep. */
 interface NkGuildBody {
@@ -62,7 +59,7 @@ export interface Clan {
     ownerName: string | null;
 }
 
-const collection = () => mongoose.connection.collection<ClanDoc>(CLANS_COLLECTION);
+const collection = () => mongoose.connection.collection<ClanDoc>(COLLECTIONS.CLANS);
 const memory = new Map<string, ClanDoc>();
 
 const GUILD_ID = /\/guild\/([0-9a-f]{16,64})/i;
@@ -120,7 +117,7 @@ export async function refreshClans(ids: Iterable<string>): Promise<{ read: numbe
     const now = Date.now();
     const stale = all.filter((id) => {
         const doc = known.get(id);
-        return !doc || now - new Date(doc.t).getTime() >= REFRESH_MS;
+        return !doc || now - new Date(doc.t).getTime() >= CLAN_REFRESH_MS;
     });
 
     const docs: ClanDoc[] = [];
@@ -152,7 +149,7 @@ export async function refreshClans(ids: Iterable<string>): Promise<{ read: numbe
             docs.push(doc);
         }
     }
-    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    await Promise.all(Array.from({ length: CLAN_FETCH_CONCURRENCY }, worker));
 
     if (docs.length > 0) {
         await collection().bulkWrite(

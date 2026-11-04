@@ -1,4 +1,6 @@
 import mongoose from 'mongoose';
+import { CODE_BOOK_SYNC_MS } from '@/config/cache';
+import { COLLECTIONS } from '@/config/db';
 import { playerNames } from '@/data/playerNames';
 import { logger } from '@/utils/logger';
 
@@ -56,8 +58,8 @@ interface PlayerEntry {
     o?: string[];
 }
 
-const codesCollection = () => mongoose.connection.collection<CodeDoc>('codes');
-const playersCollection = () => mongoose.connection.collection<PlayerDoc>('player_codes');
+const codesCollection = () => mongoose.connection.collection<CodeDoc>(COLLECTIONS.CODES);
+const playersCollection = () => mongoose.connection.collection<PlayerDoc>(COLLECTIONS.PLAYER_CODES);
 
 const kinds: CodeKind[] = [
     'hero',
@@ -91,9 +93,6 @@ let syncing: Promise<void> | null = null;
 let lastSync = 0;
 /** highest player code held in memory: player codes only grow, so newer ones are above it */
 let maxPlayerCode = -1;
-
-/** How often the server re-reads what other processes (import scripts) added. */
-const SYNC_EVERY_MS = 60_000;
 
 function addCode(_id: string, c: number) {
     const [kind, ...rest] = _id.split(':');
@@ -150,7 +149,7 @@ export async function loadCodeBook(): Promise<void> {
         throw error;
     });
     await ready;
-    if (Date.now() - lastSync > SYNC_EVERY_MS) await syncCodeBook();
+    if (Date.now() - lastSync > CODE_BOOK_SYNC_MS) await syncCodeBook();
 }
 
 // one writer at a time, so two batches never hand out the same number

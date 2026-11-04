@@ -1,6 +1,7 @@
 import { cors } from 'hono/cors';
+import { env } from '@/config/environment';
 
-const origins = (process.env.CLIENT_URL ?? 'http://localhost:5173')
+const origins = env.CLIENT_URL
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
