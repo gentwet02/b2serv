@@ -23,8 +23,8 @@ export const MAX_EX_MAPS = 10;
  */
 export const NON_HOM_MAPS: ReadonlySet<string> = new Set([
     //'park',
-    'thinice',
-    //'upontheroof',
+    //'thinice',
+    'upontheroof',
 ]);
 //'bloontoniummines',
 //'docks',
