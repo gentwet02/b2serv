@@ -26,15 +26,19 @@ console.log(`Non-HoM map ids in the code book: ${maps.join(', ') || 'none'}`);
 
 if (codes.length > 0) {
     const seasons = onlySeason !== undefined ? [onlySeason] : await listMatchSeasons();
-    const filter = { $expr: { $in: [mapExpr, codes] } };
     let total = 0;
     for (const seasonId of seasons) {
-        const n = dryRun
-            ? await collection(seasonId).countDocuments(filter)
-            : (await collection(seasonId).deleteMany(filter)).deletedCount;
-        total += n;
-        if (n > 0) {
-            console.log(`Season ${seasonId}: ${n} match(es) ${dryRun ? 'to delete' : 'deleted'}`);
+        for (const code of codes) {
+            const filter = { $expr: { $in: [mapExpr, code] } };
+            const n = dryRun
+                ? await collection(seasonId).countDocuments(filter)
+                : (await collection(seasonId).deleteMany(filter)).deletedCount;
+            total += n;
+            if (n > 0) {
+                console.log(
+                    `Season ${seasonId}, ${code}: ${n} match(es) ${dryRun ? 'to delete' : 'deleted'}`,
+                );
+            }
         }
     }
     console.log(`${dryRun ? 'Would delete' : 'Deleted'} ${total} match(es)`);
