@@ -423,10 +423,12 @@ export function opponentsMet(userId: string, seasonIds: number[]) {
             return [...records]
                 .map(([code, record]) => {
                     const player = playerOf(code);
+                    const others = player ? (player.o ?? []) : [];
                     return {
                         userId: player?.u ?? '',
                         name: player?.n ?? null,
                         alias: playerNames[player?.u ?? ''] ?? null,
+                        ...(others.length > 0 && { oldNames: others }),
                         record,
                     };
                 })

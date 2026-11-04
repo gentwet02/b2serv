@@ -25,4 +25,6 @@ export interface LeaderboardPlayerEncoded {
     r?: string;
     n: string;
     d: string;
+    /** the player's other names (their current one too, on a past season), for search */
+    o?: string[];
 }

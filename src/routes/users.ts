@@ -4,7 +4,7 @@ import { ERROR_MESSAGES } from '@/config/errors';
 import { MAX_H2H_OPPONENTS } from '@/config/limits';
 import { clanIdOf, getClan } from '@/services/clanStore';
 import { headToHead, opponentsMet, type OpponentInput } from '@/services/h2h';
-import { readLeaderboard, getRankHistory } from '@/services/leaderboard';
+import { getNameHistory, getRankHistory, readLeaderboard } from '@/services/leaderboard';
 import { getLiveMatches } from '@/services/liveMatches';
 import { getPlayerSeasonRecords, getSeasonStats } from '@/services/matchStore';
 import { getProfileSeason, getStoredProfile } from '@/services/profileStore';
@@ -21,7 +21,7 @@ import { isNkUserId } from '@/validators/nk';
  * Player data for the client, from the database (background jobs keep it up to date).
  * The one exception, /:id/matches, is rate limited (services/liveMatches.ts).
  *
- * GET /users/:id           stored profile (NK body + our season records + clan), never asks NK
+ * GET /users/:id           stored profile (NK body + season records + clan + old names), never asks NK
  * GET /users/:id/matches   NK's latest matches (fallback when we stored none), rate limited
  * GET /users/:id/season    season record: stored matches (W/D/L, heroes) + stored profile (streaks)
  * GET /users/:id/seasons   W/D/L in every stored season, from the stored matches
@@ -109,6 +109,7 @@ async function storedProfile(c: Context) {
             ...data,
             seasons: seasons.map(fixSeasonAssets),
             clan,
+            names: getNameHistory(id, body.displayName ?? ''),
             fetchedAt: stored.fetchedAt.toISOString(),
         });
     } catch (error) {

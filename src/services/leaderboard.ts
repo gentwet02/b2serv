@@ -6,9 +6,11 @@ import {
     storeLeaderboard,
 } from '@/services/leaderboardStore';
 import { fetchLeaderboard } from '@/services/ninjakiwi';
+import { nameTimelineOf } from '@/services/codeBook';
 import { getLiveSeason, getSeasons, type SeasonInfo } from '@/services/seasons';
 import type { LeaderboardPlayer, LeaderboardPlayerEncoded } from '@/types/leaderboard';
 import type { NkUserId } from '@/types/ninjakiwi';
+import type { PastName } from '@/types/player';
 import { encodePlayer } from '@/utils/encode';
 import { extractUserId, type Priority } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
@@ -24,8 +26,14 @@ interface LeaderboardEntry {
 const cache = new Map<number, LeaderboardEntry>();
 const inFlight = new Map<number, Promise<void>>();
 
-/** seasonId → userId → rank (1-based) and score; every season we have, for rank history. */
-const seasonRanks = new Map<number, Map<NkUserId, { rank: number; score: number }>>();
+/**
+ * seasonId → userId → rank (1-based), score and the name they had then; every season we have,
+ * for rank and name history.
+ */
+const seasonRanks = new Map<
+    number,
+    Map<NkUserId, { rank: number; score: number; name: string }>
+>();
 
 function remember(seasonId: number, players: LeaderboardPlayer[], updatedAt: Date, final: boolean) {
     cache.set(seasonId, {
@@ -40,7 +48,12 @@ function remember(seasonId: number, players: LeaderboardPlayer[], updatedAt: Dat
 function indexRanks(seasonId: number, players: LeaderboardPlayer[]) {
     seasonRanks.set(
         seasonId,
-        new Map(players.map((p, i) => [extractUserId(p.profile), { rank: i + 1, score: p.score }])),
+        new Map(
+            players.map((p, i) => [
+                extractUserId(p.profile),
+                { rank: i + 1, score: p.score, name: p.displayName },
+            ]),
+        ),
     );
 }
 
@@ -77,7 +90,8 @@ export function getRankHistory(userId: NkUserId) {
         history.push({
             seasonId,
             name: season?.name ?? `Season ${seasonId + 1}`,
-            ...entry,
+            rank: entry.rank,
+            score: entry.score,
             final: seasonId !== live?.seasonId,
         });
     }
@@ -88,6 +102,57 @@ export function getRankHistory(userId: NkUserId) {
         null,
     );
     return { current: history.find((h) => !h.final) ?? null, best, seasons: history };
+}
+
+/**
+ * The names a player went by other than `currentName`, newest first. The order is the code
+ * book's (`o` oldest to newest, then `n`); seasons come from the leaderboards, the only data
+ * that keeps the name a player had at the time. A name on no leaderboard gets the seasons of
+ * the dated names around it as bounds.
+ */
+export function getNameHistory(userId: NkUserId, currentName: string): PastName[] {
+    const seasonsOf = new Map<string, number[]>();
+    for (const [seasonId, ranks] of seasonRanks) {
+        const name = ranks.get(userId)?.name;
+        if (name) seasonsOf.set(name, [...(seasonsOf.get(name) ?? []), seasonId]);
+    }
+    for (const seasons of seasonsOf.values()) seasons.sort((a, b) => b - a);
+
+    const timeline = nameTimelineOf(userId).filter(
+        (name) => name !== currentName && name !== 'Unknown player',
+    );
+    // a name ranked under but missing from the code book: by its seasons, before the first
+    // later one (shouldn't happen, ensurePlayers records every leaderboard name)
+    for (const [name, seasons] of seasonsOf) {
+        if (name === currentName || name === 'Unknown player' || timeline.includes(name)) continue;
+        const later = timeline.findIndex((n) => (seasonsOf.get(n)?.at(-1) ?? -1) > seasons[0]!);
+        timeline.splice(later === -1 ? timeline.length : later, 0, name);
+    }
+
+    // the current name's first ranked season bounds the newest old names
+    const currentFirst = seasonsOf.get(currentName)?.at(-1);
+    return timeline
+        .map((name, i): PastName => {
+            const seasons = seasonsOf.get(name) ?? [];
+            if (seasons.length > 0) return { name, seasons };
+            const olderSeason = timeline
+                .slice(0, i)
+                .reverse()
+                .map((n) => seasonsOf.get(n)?.[0])
+                .find((s) => s !== undefined);
+            const newerSeason =
+                timeline
+                    .slice(i + 1)
+                    .map((n) => seasonsOf.get(n)?.at(-1))
+                    .find((s) => s !== undefined) ?? currentFirst;
+            return {
+                name,
+                seasons,
+                ...(olderSeason !== undefined && { after: olderSeason }),
+                ...(newerSeason !== undefined && { before: newerSeason }),
+            };
+        })
+        .reverse();
 }
 
 /** Fetches a season from Ninja Kiwi, keeps it in memory and stores it in Mongo */
