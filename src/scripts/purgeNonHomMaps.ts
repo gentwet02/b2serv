@@ -1,6 +1,7 @@
 /**
  * Delete stored matches played on maps out of the Hall of Masters pool that season
  * (NON_HOM_MAPS always, HOM_MAP_REMOVED_SEASON from the season they left the pool).
+ * Unfiltered seasons (UNFILTERED_SEASONS) are left as they are.
  * New matches on them are already skipped when saved; this cleans up what came in before.
  * bun run src/scripts/purgeNonHomMaps.ts [--season=46] [--dry-run]
  */

@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { MATCH_OPTIONS_TTL_MS } from '@/config/cache';
 import { COLLECTIONS, MATCHES_COLLECTION_NAME } from '@/config/db';
-import { HOM_MAP_REMOVED_SEASON, NON_HOM_MAPS } from '@/config/matches';
+import { HOM_MAP_REMOVED_SEASON, NON_HOM_MAPS, UNFILTERED_SEASONS } from '@/config/matches';
 import { NK_USER_URL_PREFIX } from '@/config/nk';
 import { playerNames } from '@/config/playerNames';
 import { HERO_BASES } from '@/config/towers';
@@ -183,9 +183,12 @@ const roundExpr = bitsOf('$d', D.round, ROUND_BITS);
 // Writing
 // ---------------------------------------------------------------------------
 
-/** Is this map out of the Hall of Masters pool in that season (any id or version of it)? */
+/**
+ * Is this map out of the Hall of Masters pool in that season (any id or version of it)?
+ * Never in an unfiltered season: those keep every match.
+ */
 export function isNonHomMap(map: string | undefined, seasonId: number) {
-    if (!map) return false;
+    if (!map || UNFILTERED_SEASONS.has(seasonId)) return false;
     const key = mapBaseKey(map);
     const removedFrom = HOM_MAP_REMOVED_SEASON[key];
     return NON_HOM_MAPS.has(key) || (removedFrom !== undefined && seasonId >= removedFrom);

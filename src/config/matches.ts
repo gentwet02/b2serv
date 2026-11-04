@@ -37,3 +37,11 @@ export const HOM_MAP_REMOVED_SEASON: Readonly<Record<string, number>> = {
     thinice: 41,
     park: 43,
 };
+/**
+ * Season ids when NK's match history wasn't limited to HoM (the client notes them). Their
+ * non-HoM games can't all be told apart anyway, so no map is dropped there.
+ * Mirrored in the client's config/seasons.ts (as shown numbers, id + 1): change both.
+ */
+export const UNFILTERED_SEASONS: ReadonlySet<number> = new Set([
+    16, 17, 18, 19, 20, 39, 40, 41, 42,
+]);
