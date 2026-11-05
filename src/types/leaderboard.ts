@@ -1,5 +1,6 @@
 import type { VERSUS_RANGES } from '@/config/leaderboard';
 import type { Model, NkApi, NkProfileUrl, NkUserId } from '@/types/ninjakiwi';
+import type { PlayerTag } from '@/types/player';
 
 export type VersusRange = (typeof VERSUS_RANGES)[number];
 
@@ -23,6 +24,8 @@ export interface LeaderboardResponse {
 export interface LeaderboardPlayerEncoded {
     i: NkUserId;
     r?: string;
+    /** the player's tag (config/tags.ts) */
+    t?: PlayerTag;
     n: string;
     d: string;
     /** the player's old names, for search */

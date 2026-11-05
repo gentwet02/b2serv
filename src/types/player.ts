@@ -1,3 +1,4 @@
+import type { PLAYER_TAGS } from '@/config/tags';
 import type { Match } from '@/types/match';
 import type { Model } from '@/types/ninjakiwi';
 
@@ -13,3 +14,5 @@ export interface PlayerMatchesResponse {
     next: null;
     prev: null;
 }
+
+export type PlayerTag = keyof typeof PLAYER_TAGS;

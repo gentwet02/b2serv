@@ -1,5 +1,4 @@
 import { HEAVY_QUERY_MAX_MS } from '@/config/limits';
-import { playerNames } from '@/config/playerNames';
 import { loadCodeBook, playerCodeOf } from '@/services/codeBook';
 import {
     byGames,
@@ -29,6 +28,7 @@ import type { CompareSeason, CompareSide } from '@/types/season';
 import { cached, createCache } from '@/utils/cache';
 import { heavy } from '@/utils/heavy';
 import { heroBase, mapFits } from '@/utils/matchLabels';
+import { aliasOf, tagOf } from '@/utils/players';
 
 /**
  * The compare side of the stats page: the games between two sides (a player or a range of
@@ -260,7 +260,8 @@ async function computeCompare(seasons: CompareSeason[], overlap: boolean, filter
             .map((o) => ({
                 userId: o.userId,
                 name: o.name,
-                alias: playerNames[o.userId] ?? null,
+                alias: aliasOf(o.userId) ?? null,
+                tag: tagOf(o.userId) ?? null,
                 rank: o.bestRank,
                 seasons: o.seasons,
                 record: o.record,

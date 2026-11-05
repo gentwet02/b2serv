@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { playerNames } from '@/config/playerNames';
+import { aliasOf, tagOf } from '@/utils/players';
 
 export const players = new Hono();
 
@@ -12,7 +13,8 @@ players.get('/:id?', async (c) => {
         return c.json(cachedPlayers);
     }
 
-    if (!cachedPlayers[id]) {
+    const alias = aliasOf(id);
+    if (!alias) {
         return c.json({
             error: {
                 message: 'No data with that user id',
@@ -20,8 +22,10 @@ players.get('/:id?', async (c) => {
         });
     }
 
+    const tag = tagOf(id);
     return c.json({
         id: id,
-        player: cachedPlayers[id],
+        player: alias,
+        ...(tag && { tag }),
     });
 });

@@ -34,7 +34,27 @@ const seasonRanks = new Map<
     Map<NkUserId, { rank: number; score: number; name: string }>
 >();
 
-function remember(seasonId: number, players: LeaderboardPlayer[], updatedAt: Date, final: boolean) {
+/**
+ * The players without repeats, first entry kept: NK's pages can shift while we read them, so a
+ * player can show up on two pages (and would break the client's lists, keyed by id).
+ */
+function withoutRepeats(seasonId: number, players: LeaderboardPlayer[]) {
+    const seen = new Set<NkUserId>();
+    const kept = players.filter((player) => {
+        const userId = extractUserId(player.profile);
+        if (seen.has(userId)) return false;
+        seen.add(userId);
+        return true;
+    });
+    if (kept.length < players.length) {
+        const repeats = players.length - kept.length;
+        logger.warn(`Leaderboard of season ${seasonId}: ${repeats} repeated players left out`);
+    }
+    return kept;
+}
+
+function remember(seasonId: number, all: LeaderboardPlayer[], updatedAt: Date, final: boolean) {
+    const players = withoutRepeats(seasonId, all);
     cache.set(seasonId, {
         players,
         encoded: players.map((player) => encodePlayer(player)),

@@ -1,8 +1,9 @@
 import mongoose from 'mongoose';
 import { CODE_BOOK_SYNC_MS } from '@/config/cache';
 import { COLLECTIONS } from '@/config/db';
-import { playerNames } from '@/config/playerNames';
+import { TAG_SEARCH_MIN_LENGTH } from '@/config/tags';
 import { logger } from '@/utils/logger';
+import { aliasOf, tagOf } from '@/utils/players';
 
 /**
  * Number codes for everything a stored match refers to, kept in MongoDB.
@@ -334,35 +335,40 @@ function nameHit(needle: string) {
 }
 
 /**
- * Players whose id, current name or alias contains `term`.
+ * Whether `needle` (lowercased) finds the player by anything but an old name: their whole id,
+ * current name, alias, or tag (its start, from TAG_SEARCH_MIN_LENGTH characters).
+ * The client's player searches (`playerMatches`) follow the same rule.
+ */
+function shownHit(needle: string, userId: string, name: string) {
+    const hit = nameHit(needle);
+    const tag = tagOf(userId);
+    const tagHit = !!tag && needle.length >= TAG_SEARCH_MIN_LENGTH && tag.startsWith(needle);
+    return userId.toLowerCase() === needle || hit(name) || hit(aliasOf(userId)) || tagHit;
+}
+
+/**
+ * Players found by `term`: see shownHit.
  * allNames: also the names they went by before (player_codes `o`).
  */
 export function findPlayerCodes(term: string, { allNames = false } = {}): number[] {
-    const raw = term.trim();
-    const needle = raw.toLowerCase();
+    const needle = term.trim().toLowerCase();
     if (!needle) return [];
     const codes = new Set<number>();
-
-    const byId = playerByUser.get(raw) ?? playerByUser.get(needle);
-    if (byId !== undefined) codes.add(byId);
-
     const hit = nameHit(needle);
     for (const [code, { u, n, o }] of playerByCode) {
-        if (hit(n) || hit(playerNames[u]) || (allNames && o?.some(hit))) codes.add(code);
+        if (shownHit(needle, u, n) || (allNames && o?.some(hit))) codes.add(code);
     }
     return [...codes];
 }
 
 /**
  * The older name of a player that `term` found, when it found them only through it
- * (not by id, current name or alias). undefined otherwise.
+ * (not by id, current name, alias or tag). undefined otherwise.
  */
 export function matchedOldName(code: number, term: string): string | undefined {
     const player = playerByCode.get(code);
     const needle = term.trim().toLowerCase();
     if (!player || !needle) return undefined;
-    const hit = nameHit(needle);
-    if (player.u === term.trim() || player.u === needle) return undefined;
-    if (hit(player.n) || hit(playerNames[player.u])) return undefined;
-    return player.o?.find(hit);
+    if (shownHit(needle, player.u, player.n)) return undefined;
+    return player.o?.find(nameHit(needle));
 }

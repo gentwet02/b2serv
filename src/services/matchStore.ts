@@ -3,7 +3,6 @@ import { MATCH_OPTIONS_TTL_MS } from '@/config/cache';
 import { COLLECTIONS, MATCHES_COLLECTION_NAME } from '@/config/db';
 import { HOM_MAP_REMOVED_SEASON, NON_HOM_MAPS, UNFILTERED_SEASONS } from '@/config/matches';
 import { NK_USER_URL_PREFIX } from '@/config/nk';
-import { playerNames } from '@/config/playerNames';
 import { HERO_BASES } from '@/config/towers';
 import {
     CODE_BITS,
@@ -44,6 +43,7 @@ import {
     mapVariant,
     parseMapFilter,
 } from '@/utils/matchLabels';
+import { aliasOf, tagOf } from '@/utils/players';
 import { matchIssues } from '@/validators/match';
 
 /**
@@ -298,9 +298,11 @@ async function side(playerCode: number, loadout: number, result: string, terms: 
     const player = playerOf(playerCode);
     const { hero, towers } = unpackLoadout(loadout);
     const userId = player?.u ?? '';
+    const tag = tagOf(userId);
     return {
         displayName: player?.n ?? 'Unknown player',
-        alias: playerNames[userId],
+        alias: aliasOf(userId),
+        ...(tag && { tag }),
         hero,
         heroPortrait: await getAssetUrl('hero', hero),
         towerone: towers[0],

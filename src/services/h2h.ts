@@ -1,5 +1,4 @@
 import { HEAVY_QUERY_MAX_MS } from '@/config/limits';
-import { playerNames } from '@/config/playerNames';
 import { CODE_BITS, loadCodeBook, nameOf, playerCodeOf, playerOf } from '@/services/codeBook';
 import { getAssetUrl } from '@/services/matchMeta';
 import {
@@ -14,6 +13,7 @@ import type { StoredMatchDoc } from '@/types/match';
 import { cached } from '@/utils/cache';
 import { heavy } from '@/utils/heavy';
 import { currentMapId, heroBase, mapBaseKey, mapVariant } from '@/utils/matchLabels';
+import { aliasOf, tagOf } from '@/utils/players';
 
 /**
  * Head to head: a player (or a group) against other players, only the games they played
@@ -377,7 +377,8 @@ async function computeHeadToHead(
         minGames: H2H_MIN_GAMES,
         labels: await label.labels(),
         name: me !== undefined ? (playerOf(me)?.n ?? null) : null,
-        alias: playerNames[userId] ?? null,
+        alias: aliasOf(userId) ?? null,
+        tag: tagOf(userId) ?? null,
         total: summarize(total, H2H_MIN_GAMES.total),
         opponents: opponents.map((o) => {
             const code = playerCodeOf(o.userId);
@@ -385,7 +386,8 @@ async function computeHeadToHead(
             return {
                 userId: o.userId,
                 name: nameOfUser(o.userId, o.name),
-                alias: playerNames[o.userId] ?? null,
+                alias: aliasOf(o.userId) ?? null,
+                tag: tagOf(o.userId) ?? null,
                 rank: o.rank,
                 ...summarize(tally, H2H_MIN_GAMES.opponent),
             };
@@ -396,7 +398,7 @@ async function computeHeadToHead(
 /** The stored name and alias of a player, for the side titles. */
 export async function storedNameOf(userId: string) {
     await loadCodeBook();
-    return { name: nameOfUser(userId), alias: playerNames[userId] ?? null };
+    return { name: nameOfUser(userId), alias: aliasOf(userId) ?? null };
 }
 
 /** Everyone the player met in these seasons, most games first (the "pick a player" list). */
@@ -427,7 +429,8 @@ export function opponentsMet(userId: string, seasonIds: number[]) {
                     return {
                         userId: player?.u ?? '',
                         name: player?.n ?? null,
-                        alias: playerNames[player?.u ?? ''] ?? null,
+                        alias: aliasOf(player?.u ?? '') ?? null,
+                        tag: tagOf(player?.u ?? '') ?? null,
                         ...(others.length > 0 && { oldNames: others }),
                         record,
                     };
