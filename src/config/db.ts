@@ -5,6 +5,7 @@ export const COLLECTIONS = {
     CODES: 'codes',
     PLAYER_CODES: 'player_codes',
     NK_ASSETS: 'nk_assets',
+    LEAGUES: 'leagues',
     /** One collection of matches per season. */
     MATCHES: (seasonId: number) => `matches_s${seasonId}`,
 } as const;

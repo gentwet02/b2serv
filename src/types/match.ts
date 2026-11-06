@@ -35,6 +35,7 @@ export interface Match {
     duration: number;
     endRound: number;
     mapURL?: string;
+    league?: string;
     playerLeft: MatchPlayer;
     playerRight: MatchPlayer;
 }

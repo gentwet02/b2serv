@@ -7,6 +7,7 @@ import connectDB from '@/services/database';
 import { CODE_BITS, codeOf, namesOf, playerCodeOf, type MatchCodeKind } from '@/services/codeBook';
 import { rememberMatchAssets } from '@/services/matchMeta';
 import { countMatches, findStoredDates, saveCrawledMatches } from '@/services/matchStore';
+import { loadLeagues, seasonOfLeague } from '@/services/leagueStore';
 import { fetchSeasons } from '@/services/ninjakiwi';
 import { toSeasonId } from '@/services/seasons';
 import type { Match } from '@/types/match';
@@ -64,6 +65,8 @@ if (!(await Bun.file(file).exists())) {
 }
 
 // ---------- NK seasons: key → our id ----------
+// A record's key is the season it was read in. A match of a known league goes to the league's
+// season instead (services/leagueStore.ts): right after a season change, dumps hold old ones.
 
 const toMs = (v: number) => (v < 1e12 ? v * 1000 : v);
 const WINDOW_MARGIN_MS = 60 * 60_000;
@@ -93,8 +96,10 @@ for (const s of nkList) {
 // ---------- state ----------
 
 await connectDB(); // reads the code book; writes happen only without --dry-run
+await loadLeagues();
 
 const skipped = { malformed: 0, notRanked: 0, duplicates: 0, unknownKey: 0, otherSeason: 0 };
+let filedByLeague = 0;
 const unknownKeys = new Map<string, number>();
 const otherSeasons = new Map<string, number>();
 const stats = new Map<number, SeasonStats>();
@@ -195,8 +200,18 @@ try {
 
         const key = record.season ?? '';
         const ref = byKey.get(key);
+        const leagueSeason = match.league ? seasonOfLeague(match.league) : null;
         let seasonId: number;
-        if (ref) {
+        if (leagueSeason !== null) {
+            if (expected !== undefined && leagueSeason !== expected) {
+                skipped.otherSeason++;
+                const label = `league ${match.league} → ${leagueSeason}`;
+                otherSeasons.set(label, (otherSeasons.get(label) ?? 0) + 1);
+                continue;
+            }
+            if (leagueSeason !== ref?.seasonId) filedByLeague++;
+            seasonId = leagueSeason;
+        } else if (ref) {
             if (expected !== undefined && ref.seasonId !== expected) {
                 skipped.otherSeason++;
                 otherSeasons.set(
@@ -284,6 +299,9 @@ console.table({
     'other season than --season': skipped.otherSeason,
     'round/duration out of range': outOfRange,
 });
+if (filedByLeague > 0) {
+    console.log(`${filedByLeague} match(es) filed under their league's season, not the record's`);
+}
 if (unknownKeys.size > 0)
     console.log('NK keys not in NK season list:', Object.fromEntries(unknownKeys));
 if (otherSeasons.size > 0)

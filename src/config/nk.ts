@@ -16,5 +16,8 @@ export const NK_API = {
     SEASONS: `${NK_API_BASE_URL}/homs`,
 } as const;
 
+/** A match's `league` when it didn't count for any HoM league (events, casual). */
+export const NK_NO_LEAGUE = 'none';
+
 /** NK user ids: 48 alphanumeric chars. validators/nk.ts isNkUserId checks one. */
 export const NK_USER_ID = /^[a-z0-9]{48}$/i;

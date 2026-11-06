@@ -287,6 +287,14 @@ export async function saveCrawledMatches(
     return { inserted: result.upsertedCount, invalid, nonHom };
 }
 
+/** Takes matches out of a season (filed there by mistake), returns how many were removed. */
+export async function deleteMatches(ids: string[], seasonId: number): Promise<number> {
+    if (ids.length === 0) return 0;
+    const result = await collection(seasonId).deleteMany({ _id: { $in: ids.map(packId) } });
+    if (result.deletedCount > 0) optionsCache.clear();
+    return result.deletedCount;
+}
+
 // ---------------------------------------------------------------------------
 // Reading back to NK's shape
 // ---------------------------------------------------------------------------

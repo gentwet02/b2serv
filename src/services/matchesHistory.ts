@@ -6,11 +6,23 @@ import {
     STORE_ATTEMPTS,
 } from '@/config/crawler';
 import { env } from '@/config/environment';
-import { getCachedLeaderboard, getLeaderboardPlayers } from '@/services/leaderboard';
+import { NK_NO_LEAGUE } from '@/config/nk';
+import {
+    ensureLeaderboard,
+    getCachedLeaderboard,
+    getLeaderboardPlayers,
+} from '@/services/leaderboard';
+import { learnLeagues, loadLeagues, seasonOfLeague } from '@/services/leagueStore';
 import { rememberMatchAssets } from '@/services/matchMeta';
-import { findStoredIds, hasStoredMatches, saveCrawledMatches } from '@/services/matchStore';
+import {
+    deleteMatches,
+    findStoredDates,
+    findStoredIds,
+    hasStoredMatches,
+    saveCrawledMatches,
+} from '@/services/matchStore';
 import { processPlayersMatches } from '@/services/ninjakiwi';
-import { getLiveSeason } from '@/services/seasons';
+import { getLiveSeason, getSeasonById } from '@/services/seasons';
 import { LeaderboardPlayer } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
 import type { CrawlProgress, NkUserId } from '@/types/ninjakiwi';
@@ -29,6 +41,8 @@ import { logger } from '@/utils/logger';
  *  - a failed database write is retried, then kept in memory for the next run;
  *  - a "gap" is counted when a known player's window holds no stored match at all:
  *    they played past it since our last read, so some matches are lost.
+ * Each match is filed under the season of its league (services/leagueStore.ts), not the live
+ * one: right after a season change, players' last matches still hold games of the one that ended.
  * The pace stays slow on purpose: the rate limiter (NK_REQUESTS_PER_SECOND) sets it.
  */
 
@@ -53,7 +67,20 @@ export const crawlState = {
     unsaved: 0,
     /** ranked matches dropped because a player is not in HoM any more (other arena) */
     notHoM: 0,
+    /** ranked matches of another season (their `league`), stored in that season */
+    otherSeason: 0,
+    /** ranked matches not filed yet: league not learned, or that season's leaderboard not loaded */
+    waiting: 0,
 };
+
+/**
+ * The season a match was played in, from its league. No league: the crawled season (what we
+ * did before NK sent one). null: a league not learned yet.
+ */
+function seasonOfMatch(match: Match, crawled: number): number | null {
+    if (!match.league || match.league === NK_NO_LEAGUE) return crawled;
+    return seasonOfLeague(match.league);
+}
 
 const isRanked = (match: Match) => match.gametype === 'Ranked';
 
@@ -102,7 +129,11 @@ function keepUnsaved(batch: Match[], seasonId: number) {
 }
 
 /** true when the batch reached the database. */
-async function storeBatch(batch: Match[], seasonId: number): Promise<boolean> {
+async function storeBatch(
+    batch: Match[],
+    seasonId: number,
+    seenAt?: (match: Match) => number | undefined,
+): Promise<boolean> {
     if (batch.length === 0) return true;
 
     // image URLs are a nice-to-have: never let them block the matches themselves
@@ -114,7 +145,7 @@ async function storeBatch(batch: Match[], seasonId: number): Promise<boolean> {
 
     for (let attempt = 1; attempt <= STORE_ATTEMPTS; attempt++) {
         try {
-            const saved = await saveCrawledMatches(batch, seasonId);
+            const saved = await saveCrawledMatches(batch, seasonId, seenAt);
             crawlState.inserted += saved.inserted;
             crawlState.rejected += saved.invalid;
             return true;
@@ -127,6 +158,24 @@ async function storeBatch(batch: Match[], seasonId: number): Promise<boolean> {
     }
     logger.error(`Storing ${batch.length} match(es) gave up: kept for the next run`);
     return false;
+}
+
+/**
+ * Stores matches of another season than the crawled one. Before NK's league was read (or while
+ * the season list lagged behind), they went into the crawled season: they move out of it,
+ * keeping the time they were first seen.
+ */
+async function storeInOtherSeason(batch: Match[], seasonId: number, crawled: number) {
+    const misfiled = await findStoredDates(
+        batch.map((m) => m.id),
+        crawled,
+    );
+    if (!(await storeBatch(batch, seasonId, (m) => misfiled.get(m.id)))) return false;
+    const moved = await deleteMatches([...misfiled.keys()], crawled);
+    if (moved > 0) {
+        logger.info(`Match crawl: ${moved} match(es) moved from season ${crawled} to ${seasonId}`);
+    }
+    return true;
 }
 
 /** Writes the matches a previous run could not store. */
@@ -167,6 +216,8 @@ export async function refreshMatchesHistory(): Promise<void> {
         failedPlayers: 0,
         gapPlayers: 0,
         notHoM: 0,
+        otherSeason: 0,
+        waiting: 0,
     });
     logger.debug(`Match crawl: starting for season ${seasonId}`);
 
@@ -176,30 +227,93 @@ export async function refreshMatchesHistory(): Promise<void> {
     let writing: Promise<void> = Promise.resolve();
     // the roster read at the start of the run, if the cache were ever missing
     let startRoster = new Set<NkUserId>();
+    // matches seen but not filed yet (filed by a later flush, at the latest the last one)
+    const waiting = new Map<string, Match>();
+    // seasons other than the crawled one that got matches this run
+    const otherSeasons = new Set<number>();
+    const rostersRequested = new Set<number>();
 
-    function flush(found: Map<string, Match>) {
+    function rosterOf(target: number): Set<string> | null {
         // read the flags now, after the matches: picks up leaderboard refreshes during the crawl
-        const hom = hallOfMasters(seasonId) ?? startRoster;
-        const batch: Match[] = [];
-        for (const [id, match] of found) {
-            if (stored.has(id)) continue;
-            stored.add(id);
-            if (bothInHoM(match, hom)) batch.push(match);
-            else crawlState.notHoM++;
+        if (target === seasonId) return hallOfMasters(seasonId) ?? startRoster;
+        const hom = hallOfMasters(target);
+        const season = getSeasonById(target);
+        if (!hom && season && !rostersRequested.has(target)) {
+            rostersRequested.add(target);
+            void ensureLeaderboard(season).catch((error) =>
+                logger.error(`Loading season ${target} leaderboard failed: ${error}`),
+            );
         }
-        crawlState.found = stored.size;
-        if (batch.length === 0) return;
-        writing = writing
-            .then(async () => {
-                if (!(await storeBatch(batch, seasonId))) keepUnsaved(batch, seasonId);
-            })
-            .catch((error) => {
-                logger.error(`Storing a match batch failed: ${error}`);
-                keepUnsaved(batch, seasonId);
-            });
+        return hom;
     }
 
-    const isStored = (ids: string[]) => findStoredIds(ids, seasonId);
+    /** Leagues of the waiting matches that aren't learned yet, with some of their match ids. */
+    function unlearned() {
+        const leagues = new Map<string, string[]>();
+        for (const match of waiting.values()) {
+            if (!match.league || seasonOfLeague(match.league) !== null) continue;
+            const ids = leagues.get(match.league) ?? [];
+            if (ids.length < 50) ids.push(match.id);
+            leagues.set(match.league, ids);
+        }
+        return leagues;
+    }
+
+    function flush(found: Map<string, Match>) {
+        const batches = new Map<number, Match[]>();
+        for (const [id, match] of found) {
+            if (stored.has(id)) continue;
+            const target = seasonOfMatch(match, seasonId);
+            const hom = target === null ? null : rosterOf(target);
+            // not marked as stored: the next flush tries again
+            if (target === null || !hom) {
+                waiting.set(id, match);
+                continue;
+            }
+            waiting.delete(id);
+            stored.add(id);
+            if (!bothInHoM(match, hom)) {
+                crawlState.notHoM++;
+                continue;
+            }
+            if (target !== seasonId) {
+                crawlState.otherSeason++;
+                otherSeasons.add(target);
+            }
+            const batch = batches.get(target) ?? [];
+            batch.push(match);
+            batches.set(target, batch);
+        }
+        crawlState.found = stored.size + waiting.size;
+        crawlState.waiting = waiting.size;
+        const leagues = unlearned();
+        if (leagues.size > 0) {
+            void learnLeagues(leagues).catch((error) =>
+                logger.error(`Learning leagues failed: ${error}`),
+            );
+        }
+        for (const [target, batch] of batches) {
+            writing = writing
+                .then(async () => {
+                    const ok =
+                        target === seasonId
+                            ? await storeBatch(batch, target)
+                            : await storeInOtherSeason(batch, target, seasonId);
+                    if (!ok) keepUnsaved(batch, target);
+                })
+                .catch((error) => {
+                    logger.error(`Storing a match batch failed: ${error}`);
+                    keepUnsaved(batch, target);
+                });
+        }
+    }
+
+    // previous season too: during a season change, a window can hold only its matches
+    async function isStored(ids: string[]) {
+        const seasons = new Set([seasonId, seasonId - 1, ...otherSeasons]);
+        const found = await Promise.all([...seasons].map((id) => findStoredIds(ids, id)));
+        return new Set(found.flatMap((set) => [...set]));
+    }
     const hasHistory = (userId: string) => hasStoredMatches(userId, seasonId);
 
     async function runPass(userIds: NkUserId[]) {
@@ -225,6 +339,7 @@ export async function refreshMatchesHistory(): Promise<void> {
     }
 
     try {
+        await loadLeagues();
         await retryUnsaved();
 
         const players = await getLeaderboardPlayers(season);
@@ -260,13 +375,30 @@ export async function refreshMatchesHistory(): Promise<void> {
             );
         }
 
+        // last chance for the waiting matches: their leagues learned, then filed
+        if (waiting.size > 0) {
+            // twice: a learning already running when we ask drops our leagues
+            for (let i = 0; i < 2 && unlearned().size > 0; i++) await learnLeagues(unlearned());
+            flush(new Map(waiting));
+        }
         await writing;
+
+        if (waiting.size > 0) {
+            const leagues = [...unlearned().keys()];
+            logger.warn(
+                `Match crawl: ${waiting.size} match(es) not filed, read again next run` +
+                    (leagues.length > 0
+                        ? ` (league not learned: ${leagues.join(', ')})`
+                        : ' (leaderboard of their season not loaded)'),
+            );
+        }
 
         logger.info(
             `Match crawl: ${crawlState.found} ranked matches seen, ${crawlState.inserted} new, ${crawlState.rejected} rejected, ` +
                 `${crawlState.retriedPlayers} retried, ${crawlState.failedPlayers} failed, ` +
                 `${crawlState.gapPlayers} gaps, ${crawlState.unsaved} unsaved, ` +
-                `${crawlState.notHoM} dropped (player out of HoM)`,
+                `${crawlState.notHoM} dropped (player out of HoM), ` +
+                `${crawlState.otherSeason} filed in another season`,
         );
     } catch (error) {
         crawlState.lastError = String(error);
