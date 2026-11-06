@@ -1,15 +1,25 @@
 /**
  * Import matches from an external dump into matches_s<season>.
  * bun run src/scripts/importMatches.ts --file=<path> [--season=46] [--dry-run] [--batch=1000]
+ *     [--skip-hom-check]
+ * Kept, like the crawler: ranked matches on HoM pool maps (saveCrawledMatches) between two
+ * players on that season's leaderboard (ours, or the dump's season_<N>/lb.json). A dump can't
+ * say whether a player was still in HoM when a match was played: that's the closest check.
+ * Unfiltered seasons (UNFILTERED_SEASONS) skip it, as they skip the map check.
+ * A record's season comes from its league (when known), then NK's season list, then --season,
+ * then the dump's folder (season_<N>/…, N as shown, our id + 1): NK drops old seasons.
  */
 import mongoose from 'mongoose';
+import { UNFILTERED_SEASONS } from '@/config/matches';
 import connectDB from '@/services/database';
 import { CODE_BITS, codeOf, namesOf, playerCodeOf, type MatchCodeKind } from '@/services/codeBook';
+import { loadStoredLeaderboard } from '@/services/leaderboardStore';
 import { rememberMatchAssets } from '@/services/matchMeta';
 import { countMatches, findStoredDates, saveCrawledMatches } from '@/services/matchStore';
 import { loadLeagues, seasonOfLeague } from '@/services/leagueStore';
 import { fetchSeasons } from '@/services/ninjakiwi';
 import { toSeasonId } from '@/services/seasons';
+import type { LeaderboardPlayer } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
 import { extractUserId } from '@/utils/helpers';
 import { readJsonObjects } from '@/utils/readJsonObjects';
@@ -54,11 +64,15 @@ const file = args.file;
 const expected = args.season !== undefined ? Number(args.season) : undefined;
 const batchSize = Math.max(1, Number(args.batch ?? 1000));
 const dryRun = args['dry-run'] === 'true';
+const checkHoM = args['skip-hom-check'] !== 'true';
 
 if (!file || (expected !== undefined && !(Number.isInteger(expected) && expected > 0))) {
     console.error('Usage: --file=<path> [--season=<our season id>] [--dry-run] [--batch=1000]');
     process.exit(1);
 }
+// season_<N>/… dumps: the season of records whose NK event isn't listed any more
+const folderNumber = Number(file.match(/season_(\d+)\//)?.[1]);
+const folderSeason = Number.isInteger(folderNumber) && folderNumber > 0 ? folderNumber - 1 : null;
 if (!(await Bun.file(file).exists())) {
     console.error(`File not found: ${file}`);
     process.exit(1);
@@ -98,7 +112,15 @@ for (const s of nkList) {
 await connectDB(); // reads the code book; writes happen only without --dry-run
 await loadLeagues();
 
-const skipped = { malformed: 0, notRanked: 0, duplicates: 0, unknownKey: 0, otherSeason: 0 };
+const skipped = {
+    malformed: 0,
+    notRanked: 0,
+    duplicates: 0,
+    unknownKey: 0,
+    otherSeason: 0,
+    notHoM: 0,
+    noLeaderboard: 0,
+};
 let filedByLeague = 0;
 const unknownKeys = new Map<string, number>();
 const otherSeasons = new Map<string, number>();
@@ -130,6 +152,31 @@ function previewCodes(match: Match) {
     const round = Math.round(match.endRound);
     const duration = Math.round(match.duration);
     if (!(round >= 0 && round <= 127) || !(duration >= 0 && duration <= 16383)) outOfRange++;
+}
+
+// ---------- HoM players: each season's leaderboard ----------
+
+/** the folder holding the season_<N>/ dumps */
+const dataRoot = file.match(/^(.*)\/season_\d+\/[^/]+$/)?.[1] ?? null;
+const rosters = new Map<number, Set<string> | null>();
+
+/** Everyone on a season's leaderboard (ours and the dump's), null when neither exists. */
+async function rosterOf(seasonId: number): Promise<Set<string> | null> {
+    if (rosters.has(seasonId)) return rosters.get(seasonId)!;
+    const ids = new Set<string>();
+    const stored = await loadStoredLeaderboard(seasonId);
+    for (const player of stored?.players ?? []) ids.add(extractUserId(player.profile));
+    const lbFile = dataRoot === null ? null : `${dataRoot}/season_${seasonId + 1}/lb.json`;
+    if (lbFile && (await Bun.file(lbFile).exists())) {
+        for await (const raw of readJsonObjects(lbFile)) {
+            for (const player of (raw as { lb?: LeaderboardPlayer[] }).lb ?? []) {
+                ids.add(extractUserId(player.profile));
+            }
+        }
+    }
+    const roster = ids.size > 0 ? ids : null;
+    rosters.set(seasonId, roster);
+    return roster;
 }
 
 async function statsFor(seasonId: number): Promise<SeasonStats> {
@@ -203,13 +250,9 @@ try {
         const leagueSeason = match.league ? seasonOfLeague(match.league) : null;
         let seasonId: number;
         if (leagueSeason !== null) {
-            if (expected !== undefined && leagueSeason !== expected) {
-                skipped.otherSeason++;
-                const label = `league ${match.league} → ${leagueSeason}`;
-                otherSeasons.set(label, (otherSeasons.get(label) ?? 0) + 1);
-                continue;
-            }
-            if (leagueSeason !== ref?.seasonId) filedByLeague++;
+            // not held to --season: importAll passes the folder's, and a leaked match isn't in
+            // the folder of its own season
+            if (leagueSeason !== (ref?.seasonId ?? expected ?? folderSeason)) filedByLeague++;
             seasonId = leagueSeason;
         } else if (ref) {
             if (expected !== undefined && ref.seasonId !== expected) {
@@ -224,10 +267,26 @@ try {
         } else if (expected !== undefined) {
             seasonId = expected; // NK doesn't list this key: trust --season
             unknownKeys.set(key, (unknownKeys.get(key) ?? 0) + 1);
+        } else if (folderSeason !== null) {
+            seasonId = folderSeason; // nor --season: trust the folder
+            unknownKeys.set(key, (unknownKeys.get(key) ?? 0) + 1);
         } else {
             skipped.unknownKey++;
             unknownKeys.set(key, (unknownKeys.get(key) ?? 0) + 1);
             continue;
+        }
+
+        if (checkHoM && !UNFILTERED_SEASONS.has(seasonId)) {
+            const roster = await rosterOf(seasonId);
+            if (!roster) {
+                skipped.noLeaderboard++;
+                continue;
+            }
+            const sides = [match.playerLeft, match.playerRight];
+            if (!sides.every((p) => roster.has(extractUserId(p.profileURL)))) {
+                skipped.notHoM++;
+                continue;
+            }
         }
 
         let ids = seenIds.get(seasonId);
@@ -297,6 +356,8 @@ console.table({
     'duplicates in file': skipped.duplicates,
     'unknown NK season key': skipped.unknownKey,
     'other season than --season': skipped.otherSeason,
+    'a player not on the season leaderboard': skipped.notHoM,
+    'no leaderboard for the season (see --skip-hom-check)': skipped.noLeaderboard,
     'round/duration out of range': outOfRange,
 });
 if (filedByLeague > 0) {

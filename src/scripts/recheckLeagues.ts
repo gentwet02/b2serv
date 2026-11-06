@@ -1,15 +1,24 @@
 /**
- * Rechecks stored matches against the leagues of match dumps (src/data/season_<N>/matches.json),
- * to undo season changes where matches of the old season were stored in the new one.
- * bun run src/scripts/recheckLeagues.ts [--data=src/data] [--leagues=<league>:<season id>,…]
- *     [--dry-run]
+ * Rechecks stored matches against the leagues of match dumps, to undo season changes where
+ * matches of the old season were stored in the new one.
+ * bun run src/scripts/recheckLeagues.ts [--data=src/data] [--from=46] [--to=48]
+ *     [--leagues=<league>:<season id>,…] [--dry-run]
+ * --from / --to: season numbers as shown, like importAll. NK sends leagues since season 46
+ * (Aug 28 2026, ~13:30 UTC): older dumps have none, reading them only costs time.
  *
- * A league belongs to the earliest season it was seen in: the dumps file matches under the
- * season they were read in, and a league only leaks forward, into the season after its own.
- * The season before the earliest dump is checked too, in our own collections.
- * With --dry-run nothing is written. Without it: the leagues are written to the `leagues`
- * register (the crawler reads it), then misfiled matches move to their season, keeping the
- * earliest time they were first seen. Restart the server afterwards: it keeps leagues in memory.
+ * Dumps are <data>/season_<N>/matches.json, N the season number as shown (our id + 1): a dump
+ * holds the matches read while that season was live. NK's season list isn't used, it drops old
+ * seasons.
+ *
+ * A league belongs to the dump holding most of its matches: around a season change, a few
+ * matches land in the dump next door (old ones read after the switch, new ones read before it).
+ * A small league seen in one dump only is flagged: it can be the leak of a season whose dump has
+ * no leagues (NK only sends them since season 46), set it with --leagues. Then each dump match
+ * is looked for in its league's season, the seasons around it and its dump's season, and moved
+ * where it belongs, keeping the earliest time it was first seen. The dumps are read twice, in
+ * batches, so any number of seasons fits in memory.
+ * With --dry-run nothing is written. Without it, the leagues also go to the `leagues` register
+ * (the crawler reads it). Restart the server afterwards: it keeps leagues in memory.
  */
 import mongoose from 'mongoose';
 import { NK_NO_LEAGUE } from '@/config/nk';
@@ -21,8 +30,6 @@ import {
     findStoredIds,
     saveCrawledMatches,
 } from '@/services/matchStore';
-import { fetchSeasons } from '@/services/ninjakiwi';
-import { toSeasonId } from '@/services/seasons';
 import type { Match } from '@/types/match';
 import { readJsonObjects } from '@/utils/readJsonObjects';
 
@@ -31,14 +38,28 @@ interface DumpRecord {
     body?: Match;
 }
 
-interface LeagueInfo {
-    /** our season ids of the dumps it appears in */
-    dumpSeasons: Set<number>;
-    ids: string[];
-    seasonId?: number;
-    /** found in our collection of the season before its earliest dump */
-    inEarlierSeason?: boolean;
+interface Dump {
+    file: string;
+    /** our season id */
+    seasonId: number;
 }
+
+interface LeagueInfo {
+    /** dump season id → matches */
+    dumps: Map<number, number>;
+    /** a few match ids of each dump, to look for in our collections */
+    samples: Map<number, string[]>;
+    seasonId?: number;
+    /** sample matches of its main dump found in our collections of the seasons around it */
+    storedBefore?: number;
+    storedAfter?: number;
+}
+
+const BATCH_SIZE = 1000;
+const SAMPLE_SIZE = 200;
+/** a league seen in one dump only with fewer matches than this may be a leak: flagged */
+const SMALL_LEAGUE = 200;
+const DUMP_FOLDER = /^season_(\d+)\/matches\.json$/;
 
 // ---------- args ----------
 
@@ -50,6 +71,8 @@ const args = Object.fromEntries(
 );
 const dataDir = (args.data ?? 'src/data').replace(/\/$/, '');
 const dryRun = args['dry-run'] === 'true';
+const from = Number(args.from ?? 0);
+const to = Number(args.to ?? Infinity);
 const overrides = new Map<string, number>();
 for (const pair of (args.leagues ?? '').split(',').filter(Boolean)) {
     const [league, season] = pair.split(':');
@@ -61,112 +84,147 @@ for (const pair of (args.leagues ?? '').split(',').filter(Boolean)) {
     overrides.set(league, seasonId);
 }
 
-const files = [...new Bun.Glob('season_*/matches.json').scanSync(dataDir)]
-    .map((path) => `${dataDir}/${path}`)
-    .sort();
-if (files.length === 0) {
-    console.error(`No season_*/matches.json under ${dataDir}`);
+const dumps: Dump[] = [];
+for (const path of new Bun.Glob('season_*/matches.json').scanSync(dataDir)) {
+    const shown = Number(path.match(DUMP_FOLDER)?.[1]);
+    if (!Number.isInteger(shown) || shown < 1) {
+        console.warn(`Skipping ${path}: no season number in the folder name`);
+        continue;
+    }
+    if (shown < from || shown > to) continue;
+    dumps.push({ file: `${dataDir}/${path}`, seasonId: shown - 1 });
+}
+dumps.sort((a, b) => a.seasonId - b.seasonId);
+if (dumps.length === 0) {
+    console.error(`No season_<N>/matches.json under ${dataDir} for that range`);
     process.exit(1);
 }
 
-function chunks<T>(list: T[], size = 1000): T[][] {
+function chunks<T>(list: T[], size = BATCH_SIZE): T[][] {
     const out: T[][] = [];
     for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
     return out;
 }
 
-// ---------- NK seasons: event id → our id ----------
-
-const nkList = await fetchSeasons();
-if (nkList.length === 0) {
-    console.error("Couldn't fetch NK's season list, try again in a minute.");
-    process.exit(1);
-}
-const seasonOfEvent = new Map<string, number>();
-for (const season of nkList) {
-    const seasonId = toSeasonId(season);
-    if (seasonId !== null) seasonOfEvent.set(season.id, seasonId);
+/** The ranked matches of a dump that have a league, null for any other record. */
+function leagueMatch(raw: unknown): Match | null {
+    const match = (raw as DumpRecord).body;
+    if (!match?.id || !match.playerLeft || !match.playerRight) return null;
+    if (match.gametype !== 'Ranked' || !match.league || match.league === NK_NO_LEAGUE) return null;
+    return match;
 }
 
 await connectDB();
 await loadLeagues();
 
-// ---------- read the dumps ----------
+// ---------- pass 1: which dumps each league appears in ----------
 
-const matches = new Map<string, Match>();
 const leagues = new Map<string, LeagueInfo>();
-const skipped = { malformed: 0, notRanked: 0, noLeague: 0, unknownEvent: 0, duplicates: 0 };
-const unknownEvents = new Set<string>();
+const skipped = { malformed: 0, notRanked: 0, noLeague: 0 };
+/** dump season id → NK event ids found in it (one expected) */
+const eventsOf = new Map<number, Map<string, number>>();
 
-for (const file of files) {
-    for await (const raw of readJsonObjects(file)) {
+for (const dump of dumps) {
+    const events = new Map<string, number>();
+    for await (const raw of readJsonObjects(dump.file)) {
         const record = raw as DumpRecord;
-        const match = record.body;
-        if (!match?.id || !match.playerLeft || !match.playerRight) {
-            skipped.malformed++;
+        const event = record.season ?? '(none)';
+        events.set(event, (events.get(event) ?? 0) + 1);
+        const match = leagueMatch(raw);
+        if (!match) {
+            if (!record.body?.id || !record.body.playerLeft || !record.body.playerRight) {
+                skipped.malformed++;
+            } else if (record.body.gametype !== 'Ranked') skipped.notRanked++;
+            else skipped.noLeague++;
             continue;
         }
-        if (match.gametype !== 'Ranked') {
-            skipped.notRanked++;
-            continue;
-        }
-        if (!match.league || match.league === NK_NO_LEAGUE) {
-            skipped.noLeague++;
-            continue;
-        }
-        const dumpSeason = seasonOfEvent.get(record.season ?? '');
-        if (dumpSeason === undefined) {
-            skipped.unknownEvent++;
-            unknownEvents.add(record.season ?? '(none)');
-            continue;
-        }
-        const info = leagues.get(match.league) ?? { dumpSeasons: new Set(), ids: [] };
-        info.dumpSeasons.add(dumpSeason);
-        leagues.set(match.league, info);
-        if (matches.has(match.id)) {
-            skipped.duplicates++;
-            continue;
-        }
-        matches.set(match.id, match);
-        info.ids.push(match.id);
+        const info = leagues.get(match.league!) ?? { dumps: new Map(), samples: new Map() };
+        info.dumps.set(dump.seasonId, (info.dumps.get(dump.seasonId) ?? 0) + 1);
+        const sample = info.samples.get(dump.seasonId) ?? [];
+        if (sample.length < SAMPLE_SIZE) sample.push(match.id);
+        info.samples.set(dump.seasonId, sample);
+        leagues.set(match.league!, info);
     }
-    console.log(`Read ${file}`);
+    eventsOf.set(dump.seasonId, events);
+    console.log(`Read ${dump.file}`);
 }
 
 // ---------- each league's season ----------
 
+function isSmall(info: LeagueInfo) {
+    const total = [...info.dumps.values()].reduce((a, b) => a + b, 0);
+    return info.dumps.size === 1 && total < SMALL_LEAGUE;
+}
+
 for (const [league, info] of leagues) {
-    const earliest = Math.min(...info.dumpSeasons);
-    let inEarlier = false;
-    for (const ids of chunks(info.ids)) {
-        if ((await findStoredIds(ids, earliest - 1)).size > 0) {
-            inEarlier = true;
-            break;
-        }
-    }
-    info.inEarlierSeason = inEarlier;
-    info.seasonId = overrides.get(league) ?? (inEarlier ? earliest - 1 : earliest);
+    // most matches, the earlier season on a tie
+    const [main] = [...info.dumps].sort(([a, n], [b, m]) => m - n || a - b)[0]!;
+    const sample = info.samples.get(main) ?? [];
+    info.storedBefore = (await findStoredIds(sample, main - 1)).size;
+    info.storedAfter = (await findStoredIds(sample, main + 1)).size;
+    info.seasonId = overrides.get(league) ?? main;
 }
 
-// ---------- where each match is stored ----------
-
-const seasonsToCheck = new Set<number>();
-for (const info of leagues.values()) {
-    for (const s of info.dumpSeasons) seasonsToCheck.add(s);
-    seasonsToCheck.add(Math.min(...info.dumpSeasons) - 1);
-    seasonsToCheck.add(info.seasonId!);
+console.log(dryRun ? '\nDRY RUN: nothing written' : '\nWriting');
+console.log('\nDumps');
+console.table(
+    Object.fromEntries(
+        dumps.map((dump) => [
+            dump.file,
+            {
+                season: dump.seasonId,
+                'NK events': [...(eventsOf.get(dump.seasonId) ?? [])]
+                    .map(([event, n]) => `${event} (${n})`)
+                    .join(', '),
+            },
+        ]),
+    ),
+);
+console.log('\nLeagues');
+console.table(
+    Object.fromEntries(
+        [...leagues]
+            .sort(([, a], [, b]) => a.seasonId! - b.seasonId!)
+            .map(([league, info]) => [
+                league,
+                {
+                    'dump matches': [...info.dumps]
+                        .sort(([a], [b]) => a - b)
+                        .map(([season, n]) => `${season}: ${n}`)
+                        .join(', '),
+                    'sample stored in season -1 / +1': `${info.storedBefore} / ${info.storedAfter}`,
+                    season: info.seasonId,
+                    'register now': seasonOfLeague(league) ?? '',
+                    override: overrides.has(league) ? 'yes' : '',
+                    check: isSmall(info) && !overrides.has(league) ? '⚠ small, one dump' : '',
+                },
+            ]),
+    ),
+);
+for (const [season, events] of eventsOf) {
+    if (events.size > 1) console.warn(`⚠ dump of season ${season} holds several NK events`);
 }
-/** match id → season → first seen (minutes) */
-const storedIn = new Map<string, Map<number, number>>();
-for (const seasonId of seasonsToCheck) {
-    for (const ids of chunks([...matches.keys()])) {
-        for (const [id, t] of await findStoredDates(ids, seasonId)) {
-            const where = storedIn.get(id) ?? new Map<number, number>();
-            where.set(seasonId, t);
-            storedIn.set(id, where);
+const flagged = [...leagues].filter(([league, info]) => isSmall(info) && !overrides.has(league));
+if (flagged.length > 0) {
+    console.warn(
+        `⚠ ${flagged.map(([league]) => league).join(', ')}: few matches in one dump only, maybe ` +
+            'a leak from a season whose dump has no leagues. Check, then set with --leagues.',
+    );
+}
+
+if (!dryRun) {
+    for (const [league, info] of leagues) {
+        const before = await setLeagueSeason(league, info.seasonId!);
+        if (before !== info.seasonId) {
+            console.log(`League ${league}: ${before ?? 'new'} → ${info.seasonId}`);
         }
     }
 }
+
+// ---------- pass 2: where each match is stored, moved where it belongs ----------
+
+const counts = { rightPlace: 0, toMove: 0, moved: 0, copiesRemoved: 0, notStored: 0 };
+const moveCounts = new Map<string, number>();
 
 interface Move {
     match: Match;
@@ -175,106 +233,115 @@ interface Move {
     /** earliest first-seen time among its copies */
     t: number;
 }
-const moves: Move[] = [];
-let rightPlace = 0;
-let notStored = 0;
-const moveCounts = new Map<string, number>();
-for (const [league, info] of leagues) {
-    const to = info.seasonId!;
-    for (const id of info.ids) {
-        const where = storedIn.get(id);
-        if (!where) {
-            notStored++;
-            continue;
+
+async function writeMoves(moves: Move[]) {
+    const byTarget = new Map<number, Move[]>();
+    for (const move of moves) byTarget.set(move.to, [...(byTarget.get(move.to) ?? []), move]);
+    for (const [to, list] of byTarget) {
+        const firstSeen = new Map(list.map((m) => [m.match.id, m.t]));
+        await saveCrawledMatches(
+            list.map((m) => m.match),
+            to,
+            (m) => firstSeen.get(m.id),
+            { renamePlayers: false },
+        );
+        // only take out of the wrong season what really is in the right one now
+        const there = await findStoredIds([...firstSeen.keys()], to);
+        const bySource = new Map<number, string[]>();
+        for (const move of list) {
+            if (!there.has(move.match.id)) continue;
+            counts.moved++;
+            for (const from of move.from) {
+                bySource.set(from, [...(bySource.get(from) ?? []), move.match.id]);
+            }
         }
-        const from = [...where.keys()].filter((s) => s !== to);
-        if (from.length === 0) {
-            rightPlace++;
-            continue;
+        for (const [from, ids] of bySource) {
+            counts.copiesRemoved += await deleteMatches(ids, from);
         }
-        moves.push({ match: matches.get(id)!, from, to, t: Math.min(...where.values()) });
-        const key = `${league}: ${from.join('+')} → ${to}`;
-        moveCounts.set(key, (moveCounts.get(key) ?? 0) + 1);
     }
 }
 
-// ---------- report ----------
+async function checkBatch(batch: Match[], dumpSeason: number) {
+    const seasons = new Set<number>([dumpSeason]);
+    for (const match of batch) {
+        const to = leagues.get(match.league!)!.seasonId!;
+        seasons.add(to - 1);
+        seasons.add(to);
+        seasons.add(to + 1);
+    }
+    /** match id → season → first seen (minutes) */
+    const storedIn = new Map<string, Map<number, number>>();
+    const ids = batch.map((m) => m.id);
+    for (const seasonId of seasons) {
+        for (const [id, t] of await findStoredDates(ids, seasonId)) {
+            const where = storedIn.get(id) ?? new Map<number, number>();
+            where.set(seasonId, t);
+            storedIn.set(id, where);
+        }
+    }
 
-console.log(dryRun ? '\nDRY RUN: nothing written' : '\nWriting');
-console.log('\nLeagues');
-console.table(
-    Object.fromEntries(
-        [...leagues]
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([league, info]) => [
-                league,
-                {
-                    'dump matches': info.ids.length,
-                    'in dumps of': [...info.dumpSeasons].sort().join(', '),
-                    'seen in season before': info.inEarlierSeason ? 'yes' : '',
-                    season: info.seasonId,
-                    'register now': seasonOfLeague(league) ?? '',
-                    override: overrides.has(league) ? 'yes' : '',
-                },
-            ]),
-    ),
-);
-console.log('\nMatches of the dumps');
-console.table({
-    'stored in their season': rightPlace,
-    'stored in another season (to move)': moves.length,
-    'not stored (importMatches can add them)': notStored,
-});
-if (moveCounts.size > 0) console.log('Moves:', Object.fromEntries(moveCounts));
-console.log('\nSkipped');
-console.table(skipped);
-if (unknownEvents.size > 0) console.log('Events not in NK season list:', [...unknownEvents]);
-
-// ---------- write ----------
+    const moves: Move[] = [];
+    for (const match of batch) {
+        const where = storedIn.get(match.id);
+        if (!where) {
+            counts.notStored++;
+            continue;
+        }
+        const to = leagues.get(match.league!)!.seasonId!;
+        const from = [...where.keys()].filter((s) => s !== to);
+        if (from.length === 0) {
+            counts.rightPlace++;
+            continue;
+        }
+        counts.toMove++;
+        moves.push({ match, from, to, t: Math.min(...where.values()) });
+        const key = `${match.league}: ${from.join('+')} → ${to}`;
+        moveCounts.set(key, (moveCounts.get(key) ?? 0) + 1);
+    }
+    if (!dryRun && moves.length > 0) await writeMoves(moves);
+}
 
 try {
-    if (!dryRun) {
-        for (const [league, info] of leagues) {
-            const before = await setLeagueSeason(league, info.seasonId!);
-            if (before !== info.seasonId) {
-                console.log(`League ${league}: ${before ?? 'new'} → ${info.seasonId}`);
+    for (const dump of dumps) {
+        let batch: Match[] = [];
+        for await (const raw of readJsonObjects(dump.file)) {
+            const match = leagueMatch(raw);
+            if (!match) continue;
+            batch.push(match);
+            if (batch.length >= BATCH_SIZE) {
+                await checkBatch(batch, dump.seasonId);
+                batch = [];
             }
         }
-
-        let moved = 0;
-        let copies = 0;
-        const byTarget = new Map<number, Move[]>();
-        for (const move of moves) byTarget.set(move.to, [...(byTarget.get(move.to) ?? []), move]);
-        for (const [to, list] of byTarget) {
-            for (const batch of chunks(list)) {
-                const firstSeen = new Map(batch.map((m) => [m.match.id, m.t]));
-                await saveCrawledMatches(
-                    batch.map((m) => m.match),
-                    to,
-                    (m) => firstSeen.get(m.id),
-                    { renamePlayers: false },
-                );
-                // only take out of the wrong season what really is in the right one now
-                const there = await findStoredIds([...firstSeen.keys()], to);
-                const bySource = new Map<number, string[]>();
-                for (const move of batch) {
-                    if (!there.has(move.match.id)) continue;
-                    moved++;
-                    for (const from of move.from) {
-                        bySource.set(from, [...(bySource.get(from) ?? []), move.match.id]);
-                    }
-                }
-                for (const [from, ids] of bySource) copies += await deleteMatches(ids, from);
-            }
-        }
-        const left = moves.length - moved;
-        console.log(
-            `\n${moved} match(es) moved, ${copies} misfiled copies removed` +
-                (left > 0 ? `, ${left} not accepted by their season and left as they were` : ''),
-        );
+        if (batch.length > 0) await checkBatch(batch, dump.seasonId);
+        console.log(`Checked ${dump.file}`);
     }
 } finally {
     await mongoose.disconnect();
 }
+
+// ---------- report ----------
+
+console.log('\nMatches of the dumps');
+console.table({
+    'stored in their season': counts.rightPlace,
+    'stored in another season (to move)': counts.toMove,
+    ...(dryRun
+        ? {}
+        : {
+              moved: counts.moved,
+              'misfiled copies removed': counts.copiesRemoved,
+              'not accepted by their season (left as they were)': counts.toMove - counts.moved,
+          }),
+    'not stored (importMatches can add them)': counts.notStored,
+});
+if (moveCounts.size > 0) {
+    console.log(
+        'Moves:',
+        Object.fromEntries([...moveCounts].sort(([a], [b]) => a.localeCompare(b))),
+    );
+}
+console.log('\nSkipped');
+console.table(skipped);
 
 process.exit(0);
