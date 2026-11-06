@@ -11,6 +11,10 @@ export const BOOSTERS: { [userId: string]: string } = {
     '9fb9158fd9c0f0a31a4a8e4d5c70e523cd521dbf96178e6c': 'Crisis',
 };
 
+export const SUSPICIOUS: { [userId: string]: string } = {
+    '9fba43888ec3faf049408e485826e277cb0d4feeca448d3f': 'TurtleTime',
+};
+
 /** A search finds a tag from this many characters, typed from its start ("nuk" for nuker). */
 export const TAG_SEARCH_MIN_LENGTH = 3;
 
@@ -19,4 +23,5 @@ export const PLAYER_TAGS = {
     cheater: CHEATERS,
     nuker: NUKERS,
     booster: BOOSTERS,
+    suspicious: SUSPICIOUS,
 } as const;
