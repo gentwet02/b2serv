@@ -1,8 +1,4 @@
-import {
-    MAX_LEADERBOARD_PAGES,
-    MAX_SEASON_PAGES,
-    PLAYER_FETCH_CONCURRENCY,
-} from '@/config/crawler';
+import { MAX_SEASON_PAGES, PLAYER_FETCH_CONCURRENCY } from '@/config/crawler';
 import { NK_API } from '@/config/nk';
 import type { LeaderboardPlayer, LeaderboardResponse } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
@@ -10,12 +6,13 @@ import type {
     CrawlOptions,
     CrawlResult,
     HistoryOptions,
+    NkAnswer,
     NkUserId,
     PlayerHistory,
 } from '@/types/ninjakiwi';
 import type { PlayerMatchesResponse } from '@/types/player';
 import type { Season, SeasonsResponse } from '@/types/season';
-import { fetchWithRetry, type Priority } from '@/utils/helpers';
+import { fetchNk, fetchWithRetry, type Priority } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
 
 function nextPageUrl(next: unknown): string | null {
@@ -30,7 +27,7 @@ export async function fetchSeasons(): Promise<Season[]> {
 
     while (url && page < MAX_SEASON_PAGES) {
         page++;
-        const data: SeasonsResponse | null = await fetchWithRetry(url);
+        const data: SeasonsResponse | null = await fetchWithRetry(url, { priority: 'normal' });
 
         if (!data) {
             logger.error(`No response for seasons page ${page}`);
@@ -78,16 +75,17 @@ async function fetchLeaderboardPage(
     return data;
 }
 
+/** Every page NK has: `maxPages` when it sends one, otherwise `next` until there is none. */
 export async function fetchLeaderboard(
     seasonId: number,
-    priority: Priority = 'low',
+    priority: Priority = 'normal',
 ): Promise<LeaderboardPlayer[]> {
     const started = Date.now();
     const first = await fetchLeaderboardPage(seasonId, 1, priority);
     if (!first) return [];
 
     const players: LeaderboardPlayer[] = [...(first.body ?? [])];
-    const maxPages = Math.min(Number(first.maxPages) || 0, MAX_LEADERBOARD_PAGES);
+    const maxPages = Number(first.maxPages) || 0;
 
     if (maxPages > 1) {
         const pageNumbers = Array.from({ length: maxPages - 1 }, (_, i) => i + 2);
@@ -99,11 +97,14 @@ export async function fetchLeaderboard(
             players.push(...(page.body ?? []));
         }
     } else if (first.next) {
-        for (let pageNb = 2; pageNb <= MAX_LEADERBOARD_PAGES; pageNb++) {
+        // a `next` seen before would loop forever
+        const seen = new Set<string>([first.next]);
+        for (let pageNb = 2; ; pageNb++) {
             const page = await fetchLeaderboardPage(seasonId, pageNb, priority);
             if (!page) break;
             players.push(...(page.body ?? []));
-            if (!page.next) break;
+            if (!page.next || seen.has(page.next)) break;
+            seen.add(page.next);
         }
     }
 
@@ -119,42 +120,50 @@ export async function fetchLeaderboard(
 // enough, and noticing when we didn't (a "gap").
 // ---------------------------------------------------------------------------
 
-/** null: NK did not answer, even after retries. */
-async function fetchMatches(userId: NkUserId): Promise<PlayerMatchesResponse | null> {
-    const data: PlayerMatchesResponse | null = await fetchWithRetry(NK_API.PLAYER_MATCHES(userId), {
+/** status "failed": NK did not answer (even after retries) or answered with an error. */
+async function fetchMatches(
+    userId: NkUserId,
+    etag: string | null,
+): Promise<NkAnswer<PlayerMatchesResponse>> {
+    const answer = await fetchNk<PlayerMatchesResponse>(NK_API.PLAYER_MATCHES(userId), {
         priority: 'low',
         retries: 4,
+        etag,
     });
-
-    if (!data) {
-        logger.warn(`No response for matches of user ${userId}`);
-        return null;
+    if (answer.status !== 'ok') {
+        if (answer.status === 'failed') logger.warn(`No response for matches of user ${userId}`);
+        return answer;
     }
-    if (!data.success || data.error) {
-        logger.warn(`Matches of user ${userId} failed: ${data.error ?? 'unsuccessful'}`);
-        return null;
+    const data = answer.data;
+    if (!data || !data.success || data.error) {
+        logger.warn(`Matches of user ${userId} failed: ${data?.error ?? 'unsuccessful'}`);
+        return { ...answer, data: null, status: 'failed' };
     }
-    return data;
+    return answer;
 }
 
 export async function fetchPlayerHistory(
     userId: NkUserId,
-    { isStored, hasHistory, filter }: HistoryOptions,
+    { isStored, hasHistory, filter, etag = null }: HistoryOptions,
 ): Promise<PlayerHistory> {
-    const data = await fetchMatches(userId);
-    if (!data) return { matches: [], ok: false, gap: false };
+    const answer = await fetchMatches(userId, etag);
+    const read = { etag: answer.etag, ageS: answer.ageS, gap: false };
+    if (answer.status === 'failed') return { ...read, matches: [], ok: false, unchanged: false };
+    if (answer.status === 'unchanged' || !answer.data) {
+        return { ...read, matches: [], ok: true, unchanged: true };
+    }
 
-    const matches = (data.body ?? []).filter(filter);
-    if (matches.length === 0) return { matches, ok: true, gap: false };
+    const matches = (answer.data.body ?? []).filter(filter);
+    if (matches.length === 0) return { ...read, matches, ok: true, unchanged: false };
 
     // gap check only: a database hiccup here must not cost us the matches themselves
     try {
         const stored = await isStored(matches.map((m) => m.id));
         const gap = stored.size === 0 && (await hasHistory(userId));
-        return { matches, ok: true, gap };
+        return { ...read, matches, ok: true, unchanged: false, gap };
     } catch (error) {
         logger.warn(`Gap check of user ${userId} failed: ${error}`);
-        return { matches, ok: true, gap: false };
+        return { ...read, matches, ok: true, unchanged: false };
     }
 }
 
@@ -182,6 +191,8 @@ export async function processPlayersMatches(
         hasHistory,
         filter = () => true,
         concurrency = PLAYER_FETCH_CONCURRENCY,
+        etagOf = () => null,
+        onPlayer,
         onProgress,
     } = options;
 
@@ -194,11 +205,20 @@ export async function processPlayersMatches(
     await forEachWithConcurrency(userIds, concurrency, async (userId) => {
         let history: PlayerHistory;
         try {
-            history = await fetchPlayerHistory(userId, { isStored, hasHistory, filter });
+            const etag = etagOf(userId);
+            history = await fetchPlayerHistory(userId, { isStored, hasHistory, filter, etag });
         } catch (error) {
             logger.error(`Reading matches of user ${userId} failed: ${error}`);
-            history = { matches: [], ok: false, gap: false };
+            history = {
+                matches: [],
+                ok: false,
+                unchanged: false,
+                etag: null,
+                ageS: null,
+                gap: false,
+            };
         }
+        onPlayer?.(userId, history);
 
         for (const match of history.matches) {
             if (!matches.has(match.id)) matches.set(match.id, match);

@@ -8,5 +8,10 @@ export const LIVE_MATCHES_MAX_CACHED = 2000;
 /** Decoded profile documents, by player code. Small: one entry is a few hundred bytes. */
 export const PROFILES_MAX_CACHED = 5000;
 
+/** How long Cloudflare keeps its copy of a player's matches */
+export const NK_MATCHES_CACHE_MS = 20 * 60_000;
+/** Same for a player's profile: assumed like the matches, not measured yet. */
+export const NK_PROFILES_CACHE_MS = 20 * 60_000;
+
 /** How often the server re-reads what other processes (import scripts) added. */
 export const CODE_BOOK_SYNC_MS = 60_000;

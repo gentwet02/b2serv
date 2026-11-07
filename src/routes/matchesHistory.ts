@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import { SCHEDULE_TICK_MS } from '@/config/crawler';
 import { env } from '@/config/environment';
 import { MAX_MATCHES_PAGE } from '@/config/limits';
 import {
@@ -9,7 +10,12 @@ import {
     MAX_HEROES,
     MAX_TOWERS,
 } from '@/config/matches';
-import { crawlState, nextCrawlInMs, refreshMatchesHistory } from '@/services/matchesHistory';
+import {
+    crawlState,
+    matchSchedule,
+    nextCrawlInMs,
+    refreshMatchesHistory,
+} from '@/services/matchesHistory';
 import {
     canUseSameSide,
     countMatches,
@@ -211,8 +217,10 @@ matchesHistory.get('/status', async (c) =>
         seasonId: crawlState.seasonId,
         found: crawlState.found,
         rejected: crawlState.rejected,
+        players: crawlState.players,
+        unchangedPlayers: crawlState.unchangedPlayers,
+        schedule: matchSchedule.stats(Date.now()),
         safety: {
-            retriedPlayers: crawlState.retriedPlayers,
             failedPlayers: crawlState.failedPlayers,
             gapPlayers: crawlState.gapPlayers,
             unsaved: crawlState.unsaved,
@@ -232,6 +240,7 @@ matchesHistory.post('/force-update', (c) => {
         return c.json({ message: 'Not found', error: 'Not found' }, 404);
     }
     if (crawlState.isFetching) return c.json({ message: 'Update already in progress' });
+    matchSchedule.makeAllDue();
     void refreshMatchesHistory();
     return c.json({ message: 'Crawl started. Check /matches-history/status for progress.' }, 202);
 });
@@ -243,6 +252,6 @@ export async function startMatchesScheduler() {
         async () => {
             if (nextCrawlInMs() === 0) await refreshMatchesHistory();
         },
-        60_000,
+        SCHEDULE_TICK_MS,
     );
 }

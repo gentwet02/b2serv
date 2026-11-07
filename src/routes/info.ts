@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { listMatchSeasons } from '@/services/matchStore';
 import { countStoredProfiles } from '@/services/profileStore';
-import { nextSweepInMs, sweepState } from '@/services/profileSweep';
+import { nextSweepInMs, profileSchedule, sweepState } from '@/services/profileSweep';
 import { getLiveSeason, getSeasons, getSeasonsLastFetch } from '@/services/seasons';
 import { getAssetReport } from '@/utils/assets';
 
@@ -36,6 +36,7 @@ info.get('/profiles', async (c) =>
         lastRunStartedAt: sweepState.lastRunStartedAt?.toISOString() ?? null,
         lastRunEndedAt: sweepState.lastRunEndedAt?.toISOString() ?? null,
         nextRunIn: nextSweepInMs() ?? 'running',
+        schedule: profileSchedule.stats(Date.now()),
         stored: await countStoredProfiles().catch(() => null),
         lastRunStored: sweepState.stored,
     }),

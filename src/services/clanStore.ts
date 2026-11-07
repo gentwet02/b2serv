@@ -128,7 +128,7 @@ export async function refreshClans(ids: Iterable<string>): Promise<{ read: numbe
             const id = stale[index++]!;
             const data = await fetchWithRetry<{ success?: boolean; body?: NkGuildBody }>(
                 NK_API.GUILD(id),
-                { priority: 'low', retries: 3 },
+                { priority: 'idle', retries: 3 },
             );
             const body = data?.success ? data.body : undefined;
             if (!body || typeof body.name !== 'string') {

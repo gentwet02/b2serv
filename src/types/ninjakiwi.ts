@@ -42,6 +42,36 @@ export interface StoreLookup {
 
 export interface HistoryOptions extends StoreLookup {
     filter: (match: Match) => boolean;
+    /** the etag of the player's last read: an unchanged page is not processed again */
+    etag?: string | null;
+}
+
+/** One NK read, with what Cloudflare said about its copy. */
+export interface NkAnswer<T> {
+    /** null when NK did not answer (after retries) or answered "unchanged" */
+    data: T | null;
+    /** unchanged: same etag as the one sent (a 304, or a 200 with the same etag) */
+    status: 'ok' | 'unchanged' | 'failed';
+    etag: string | null;
+    /** how old Cloudflare's copy is, in seconds (the `age` header; null when absent) */
+    ageS: number | null;
+}
+
+/** When a player's page is read next (services/readSchedule.ts). */
+export interface ReadTiming {
+    etag: string | null;
+    nextFetchAt: number;
+    lastFetchAt: number;
+    /** the last time the player was on the roster */
+    seenAt: number;
+}
+
+/** What a read tells its schedule. */
+export interface ReadOutcome {
+    /** false: NK did not answer, read again soon */
+    ok: boolean;
+    etag: string | null;
+    ageS: number | null;
 }
 
 /**
@@ -52,6 +82,10 @@ export interface PlayerHistory {
     matches: Match[];
     /** false: the request failed — read this player again later */
     ok: boolean;
+    /** true: the page is the same as the last read, nothing was processed */
+    unchanged: boolean;
+    etag: string | null;
+    ageS: number | null;
     /**
      * true: we already knew this player but none of the returned matches is stored,
      * so they played past NK's window since our last read and older matches are lost.
@@ -61,6 +95,10 @@ export interface PlayerHistory {
 
 export interface CrawlOptions extends StoreLookup {
     filter?: (match: Match) => boolean;
+    /** the etag of each player's last read */
+    etagOf?: (userId: NkUserId) => string | null;
+    /** called after each player's read, failed or not */
+    onPlayer?: (userId: NkUserId, history: PlayerHistory) => void;
     concurrency?: number;
     onProgress?: (matches: Map<string, Match>, progress: CrawlProgress) => void;
 }

@@ -3,22 +3,30 @@
 // ---------------------------------------------------------------------------
 
 export const MAX_SEASON_PAGES = 1;
-export const MAX_LEADERBOARD_PAGES = 20;
 export const PLAYER_FETCH_CONCURRENCY = 4;
 
 // ---------------------------------------------------------------------------
 // Match crawler
 // ---------------------------------------------------------------------------
 
-/** Players read at the same time. The real pace is set by NK_REQUESTS_PER_SECOND. */
+/** Players read at the same time. The real pace is set by the rate limiter (utils/helpers.ts). */
 export const CRAWL_CONCURRENCY = 2;
-/** Extra passes over the players NK did not answer for, at the end of a crawl. */
-export const CRAWL_RETRY_PASSES = 3;
-/** Pause before retry pass n: n × this. */
-export const CRAWL_RETRY_PAUSE_MS = 60_000;
 /** Attempts to write one batch of matches to the database. */
 export const STORE_ATTEMPTS = 3;
 export const MAX_UNSAVED = 20_000;
+
+// ---------------------------------------------------------------------------
+// Read schedules: when each player's matches and profile are read (services/readSchedule.ts)
+// ---------------------------------------------------------------------------
+
+/** How often the crawler and the profile sweep look for players due a read. */
+export const SCHEDULE_TICK_MS = 15_000;
+/** Read a player this long after their Cloudflare copy expires, so the new copy is there. */
+export const SCHEDULE_EXPIRY_MARGIN_MS = 5_000;
+/** A player NK did not answer for is read again this long after. */
+export const SCHEDULE_RETRY_MS = 60_000;
+/** A player off the roster this long leaves the schedule (banned, deleted, out of HoM). */
+export const SCHEDULE_DROP_AFTER_MS = 3600_000;
 
 // ---------------------------------------------------------------------------
 // Profile sweep and clans

@@ -1,11 +1,10 @@
+import { NK_MATCHES_CACHE_MS } from '@/config/cache';
 import {
     CRAWL_CONCURRENCY,
-    CRAWL_RETRY_PASSES,
-    CRAWL_RETRY_PAUSE_MS,
     MAX_UNSAVED,
+    SCHEDULE_RETRY_MS,
     STORE_ATTEMPTS,
 } from '@/config/crawler';
-import { env } from '@/config/environment';
 import { NK_NO_LEAGUE } from '@/config/nk';
 import {
     ensureLeaderboard,
@@ -22,6 +21,7 @@ import {
     saveCrawledMatches,
 } from '@/services/matchStore';
 import { processPlayersMatches } from '@/services/ninjakiwi';
+import { createReadSchedule } from '@/services/readSchedule';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
 import { LeaderboardPlayer } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
@@ -34,16 +34,19 @@ import { logger } from '@/utils/logger';
  * and new ones are stored as they are found (in batches), with image URLs.
  * Visitors read the database (services/matchStore.ts), never the crawler.
  *
+ * Each player has their own timing (services/readSchedule.ts): read just after Cloudflare's
+ * copy of their page expires, about every NK_MATCHES_CACHE_MS. A run reads the players due,
+ * every SCHEDULE_TICK_MS. A page with the same etag as the last read is not processed again.
+ *
  * NK only serves a player's last ~24 matches, with no paging. A match is kept only if we
  * read the player (or the opponent) before it slips out of that window, so:
- *  - players NK did not answer for are read again at the end of the run, after a pause,
- *    and the ones still failing are read first on the next run;
+ *  - players NK did not answer for are due again after SCHEDULE_RETRY_MS;
  *  - a failed database write is retried, then kept in memory for the next run;
  *  - a "gap" is counted when a known player's window holds no stored match at all:
  *    they played past it since our last read, so some matches are lost.
  * Each match is filed under the season of its league (services/leagueStore.ts), not the live
  * one: right after a season change, players' last matches still hold games of the one that ended.
- * The pace stays slow on purpose: the rate limiter (NK_REQUESTS_PER_SECOND) sets it.
+ * The pace is set by the rate limiter (utils/helpers.ts), shared with every other NK request.
  */
 
 export const crawlState = {
@@ -56,10 +59,12 @@ export const crawlState = {
     found: 0,
     inserted: 0,
     rejected: 0,
+    /** players read in the current / last run */
+    players: 0,
+    /** players whose page had not changed since their last read (not processed) */
+    unchangedPlayers: 0,
     // safety net, for the current / last run
-    /** players read again after a failed request */
-    retriedPlayers: 0,
-    /** players still unreadable at the end of the run (read first on the next one) */
+    /** players NK did not answer for (due again after SCHEDULE_RETRY_MS) */
     failedPlayers: 0,
     /** known players whose NK window overflowed since the last read (matches lost) */
     gapPlayers: 0,
@@ -72,6 +77,8 @@ export const crawlState = {
     /** ranked matches not filed yet: league not learned, or that season's leaderboard not loaded */
     waiting: 0,
 };
+
+export const matchSchedule = createReadSchedule('matches', NK_MATCHES_CACHE_MS);
 
 /**
  * The season a match was played in, from its league. No league: the crawled season (what we
@@ -104,8 +111,6 @@ function bothInHoM(match: Match, hom: Set<string>) {
     );
 }
 
-/** Players NK did not answer for, by season: read first on the next run. */
-const pendingPlayers = new Map<number, Set<NkUserId>>();
 /** Matches whose write failed, by season: written first on the next run. */
 const unsavedMatches = new Map<number, Map<string, Match>>();
 
@@ -203,6 +208,28 @@ export async function refreshMatchesHistory(): Promise<void> {
     }
 
     const seasonId = season.seasonId;
+    // held while the roster is read, so two ticks don't run at once
+    crawlState.isFetching = true;
+    let roster: Set<NkUserId>;
+    let userIds: NkUserId[];
+    try {
+        const players = await getLeaderboardPlayers(season);
+        roster = homIds(players);
+        if (roster.size === 0) throw new Error(`Nobody in HoM for season ${seasonId}`);
+        const now = Date.now();
+        matchSchedule.syncRoster(seasonId, roster, now);
+        userIds = matchSchedule.duePlayers(now);
+    } catch (error) {
+        crawlState.lastError = String(error);
+        crawlState.isFetching = false;
+        logger.error(`Match crawl failed: ${error}`);
+        return;
+    }
+    if (userIds.length === 0) {
+        crawlState.isFetching = false;
+        return;
+    }
+
     Object.assign(crawlState, {
         isFetching: true,
         seasonId,
@@ -212,7 +239,8 @@ export async function refreshMatchesHistory(): Promise<void> {
         found: 0,
         inserted: 0,
         rejected: 0,
-        retriedPlayers: 0,
+        players: userIds.length,
+        unchangedPlayers: 0,
         failedPlayers: 0,
         gapPlayers: 0,
         notHoM: 0,
@@ -226,7 +254,7 @@ export async function refreshMatchesHistory(): Promise<void> {
     // batches are written one after another, never in parallel
     let writing: Promise<void> = Promise.resolve();
     // the roster read at the start of the run, if the cache were ever missing
-    let startRoster = new Set<NkUserId>();
+    const startRoster: Set<string> = roster;
     // matches seen but not filed yet (filed by a later flush, at the latest the last one)
     const waiting = new Map<string, Match>();
     // seasons other than the crawled one that got matches this run
@@ -323,6 +351,11 @@ export async function refreshMatchesHistory(): Promise<void> {
             hasHistory,
             filter: isRanked,
             concurrency: CRAWL_CONCURRENCY,
+            etagOf: matchSchedule.etagOf,
+            onPlayer: (userId, history) => {
+                matchSchedule.recordRead(userId, history, Date.now());
+                if (history.unchanged) crawlState.unchangedPlayers++;
+            },
             onProgress: (found, progress) => {
                 crawlState.progress = progress;
                 flush(found);
@@ -342,36 +375,11 @@ export async function refreshMatchesHistory(): Promise<void> {
         await loadLeagues();
         await retryUnsaved();
 
-        const players = await getLeaderboardPlayers(season);
-        if (players.length === 0) throw new Error(`Empty leaderboard for season ${seasonId}`);
-
-        startRoster = homIds(players);
-        if (startRoster.size === 0) throw new Error(`Nobody in HoM for season ${seasonId}`);
-
-        // players left over from the previous run first, then the leaderboard
-        const pending = [...(pendingPlayers.get(seasonId) ?? [])].filter((id) =>
-            startRoster.has(id),
-        );
-        const userIds = [...new Set([...pending, ...startRoster])].filter(Boolean);
-        pendingPlayers.delete(seasonId);
-
-        let failed = await runPass(userIds);
-
-        for (let pass = 1; failed.length > 0 && pass <= CRAWL_RETRY_PASSES; pass++) {
-            const wait = CRAWL_RETRY_PAUSE_MS * pass;
-            logger.warn(
-                `Match crawl: no answer for ${failed.length} player(s), retry ${pass}/${CRAWL_RETRY_PASSES} in ${wait / 1000}s`,
-            );
-            await delay(wait);
-            crawlState.retriedPlayers += failed.length;
-            failed = await runPass(failed);
-        }
-
+        const failed = await runPass(userIds);
         crawlState.failedPlayers = failed.length;
         if (failed.length > 0) {
-            pendingPlayers.set(seasonId, new Set(failed));
-            logger.error(
-                `Match crawl: ${failed.length} player(s) still unanswered, read first next run`,
+            logger.warn(
+                `Match crawl: no answer for ${failed.length} player(s), read again in ${SCHEDULE_RETRY_MS / 1000}s`,
             );
         }
 
@@ -384,6 +392,11 @@ export async function refreshMatchesHistory(): Promise<void> {
         await writing;
 
         if (waiting.size > 0) {
+            // their players' pages may not change again: read them in full next time
+            for (const match of waiting.values()) {
+                matchSchedule.forgetEtag(extractUserId(match.playerLeft.profileURL));
+                matchSchedule.forgetEtag(extractUserId(match.playerRight.profileURL));
+            }
             const leagues = [...unlearned().keys()];
             logger.warn(
                 `Match crawl: ${waiting.size} match(es) not filed, read again next run` +
@@ -393,9 +406,15 @@ export async function refreshMatchesHistory(): Promise<void> {
             );
         }
 
-        logger.info(
-            `Match crawl: ${crawlState.found} ranked matches seen, ${crawlState.inserted} new, ${crawlState.rejected} rejected, ` +
-                `${crawlState.retriedPlayers} retried, ${crawlState.failedPlayers} failed, ` +
+        // a run every few seconds: only the ones that did something are worth an info line
+        const eventful =
+            crawlState.inserted > 0 || crawlState.failedPlayers > 0 || crawlState.gapPlayers > 0;
+        logger[eventful ? 'info' : 'debug'](
+            `Match crawl: ${crawlState.players} players read ` +
+                `(${crawlState.unchangedPlayers} unchanged), ` +
+                `${crawlState.found} ranked matches seen, ${crawlState.inserted} new, ` +
+                `${crawlState.rejected} rejected, ` +
+                `${crawlState.failedPlayers} failed, ` +
                 `${crawlState.gapPlayers} gaps, ${crawlState.unsaved} unsaved, ` +
                 `${crawlState.notHoM} dropped (player out of HoM), ` +
                 `${crawlState.otherSeason} filed in another season`,
@@ -411,9 +430,8 @@ export async function refreshMatchesHistory(): Promise<void> {
     }
 }
 
-/** ms until the next crawl may start (crawls are spaced from the end of the previous one) */
+/** ms until a player is due, null while a run reads; 0 before the schedule knows anyone */
 export function nextCrawlInMs(): number | null {
     if (crawlState.isFetching) return null;
-    const ended = crawlState.lastRunEndedAt?.getTime();
-    return ended ? Math.max(0, ended + env.NK_MATCHES_INTERVAL - Date.now()) : 0;
+    return matchSchedule.nextReadInMs(Date.now()) ?? 0;
 }

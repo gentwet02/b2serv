@@ -193,7 +193,10 @@ export function getNameHistory(userId: NkUserId, currentName: string): string[] 
 }
 
 /** Fetches a season from Ninja Kiwi, keeps it in memory and stores it in Mongo */
-export function updateLeaderboard(season: SeasonInfo, priority: Priority = 'low'): Promise<void> {
+export function updateLeaderboard(
+    season: SeasonInfo,
+    priority: Priority = 'normal',
+): Promise<void> {
     const id = season.seasonId;
     const running = inFlight.get(id);
     if (running) return running;
