@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { BSON } from 'mongodb';
+import { mongo } from 'mongoose';
 import type { ProfileCodeKind } from '@/services/codeBook';
 import {
     applyReading,
@@ -127,7 +127,7 @@ function read(
 ) {
     codec.ensure(b);
     const next = applyReading(doc, 7, { body: b, date, seasonId }, codec);
-    const back = unpack(BSON.deserialize(BSON.serialize(pack(next))) as never);
+    const back = unpack(mongo.BSON.deserialize(mongo.BSON.serialize(pack(next))) as never);
     expect(back).toEqual(next);
     return back;
 }
@@ -190,7 +190,7 @@ describe('profile round trip', () => {
         const b = body([767, 0, 320, 0, 23]);
         let doc = read(null, codec, b, day(0), 18);
         doc = read(doc, codec, body([800, 0, 330, 2, 23]), day(40), 19);
-        const size = BSON.calculateObjectSize(pack(doc));
+        const size = mongo.BSON.calculateObjectSize(pack(doc));
         expect(size).toBeLessThan(JSON.stringify(b).length);
     });
 });
