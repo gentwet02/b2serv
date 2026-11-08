@@ -28,6 +28,7 @@ import type {
     Match,
     MatchesFilter,
     MatchPlayer,
+    MatchSide,
     MatchSort,
     SideOptions,
     StoredMatchDoc,
@@ -571,7 +572,7 @@ function buildQuery(filter: FacetFilter): BuiltQuery | null {
         }
     }
     if (exprs.length) match.$expr = exprs.length === 1 ? exprs[0] : { $and: exprs };
-    return { match, sides };
+    return { match, sides, players: [playerCodes, playerCodes2] };
 }
 
 // ---------------------------------------------------------------------------
@@ -792,7 +793,27 @@ const SORTS: Record<MatchSort, Record<string, 1 | -1>> = {
     rounds: { _round: -1, t: -1 },
 };
 
-const EMPTY = { total: 0, items: [] as Awaited<ReturnType<typeof toApiMatch>>[] };
+type ListedMatch = Awaited<ReturnType<typeof toApiMatch>> & { searchedSide?: MatchSide };
+
+const EMPTY = { total: 0, items: [] as ListedMatch[] };
+
+/**
+ * The stored side player 1's search found, or failing that the side player 2's didn't.
+ * Undefined when the search fits both players (a tag, a common name part) or neither.
+ */
+function searchedSide(doc: StoredMatchDoc, [one, two]: BuiltQuery['players']) {
+    function sideOf(codes: number[] | null): MatchSide | undefined {
+        if (!codes) return undefined;
+        const left = codes.includes(doc.a);
+        if (left === codes.includes(doc.b)) return undefined;
+        return left ? 'left' : 'right';
+    }
+    const first = sideOf(one);
+    if (first) return first;
+    const second = sideOf(two);
+    if (!second) return undefined;
+    return second === 'left' ? 'right' : 'left';
+}
 
 /**
  * One page of matches. Every season: each season's collection is filtered, sorted and cut to
@@ -804,7 +825,7 @@ export async function queryMatches(filter: MatchesFilter) {
     const seasonIds = await seasonsOf(filter.seasonId);
     const built = buildQuery(filter);
     if (!built || seasonIds.length === 0) return EMPTY;
-    const { match } = built;
+    const { match, players } = built;
 
     const filtered = Object.keys(match).length > 0;
     const sort = { $sort: SORTS[filter.sort] };
@@ -851,7 +872,13 @@ export async function queryMatches(filter: MatchesFilter) {
     const terms = filter.allNames ? [filter.player, filter.player2] : [];
     return {
         total: counts.reduce((a, b) => a + b, 0),
-        items: await Promise.all(docs.map((doc) => toApiMatch(doc, terms, first))),
+        items: await Promise.all(
+            docs.map(async (doc): Promise<ListedMatch> => {
+                const side = searchedSide(doc, players);
+                const item = await toApiMatch(doc, terms, first);
+                return side ? { ...item, searchedSide: side } : item;
+            }),
+        ),
     };
 }
 

@@ -100,7 +100,12 @@ export interface BuiltQuery {
      * left player and side 2's the right one, `swapped` for the other way round.
      */
     sides: { straight: object; swapped: object } | null;
+    /** The searched players' codes (null: no search): player 1's, and in same player mode 2's. */
+    players: [one: number[] | null, two: number[] | null];
 }
+
+/** Which stored player a match list puts first when the viewer keeps sides. */
+export type MatchSide = 'left' | 'right';
 
 /** Heroes and towers available for one side (or both sides when not split). */
 export interface SideOptions {
