@@ -69,9 +69,6 @@ export interface StatsRow {
     record: Wld;
 }
 
-/** Strats sent back, most played first. */
-const MAX_LOADOUTS = 500;
-
 const cubeCache = new Map<string, { rows: CubeRow[]; expires: number }>();
 const pending = new Map<string, Promise<CubeRow[]>>();
 
@@ -183,11 +180,10 @@ function tally(map: Map<string, Wld>, key: string, i: WldIndex, n: number) {
 const add = (map: Map<string, number>, key: string, n: number) =>
     map.set(key, (map.get(key) ?? 0) + n);
 const gamesOf = (r: Wld) => r[0] + r[1] + r[2];
-function rows(map: Map<string, Wld>, limit = Infinity): StatsRow[] {
+function rows(map: Map<string, Wld>): StatsRow[] {
     return [...map]
         .map(([key, record]) => ({ key, record }))
-        .sort((a, b) => gamesOf(b.record) - gamesOf(a.record))
-        .slice(0, limit);
+        .sort((a, b) => gamesOf(b.record) - gamesOf(a.record));
 }
 interface DecodedLoadout {
     base: string;
@@ -366,14 +362,11 @@ export async function computeStats(query: StatsQuery) {
         /** one row per hero variant (skin) */
         heroVariants: rows(byVariant),
         towers: rows(byTower),
-        loadouts: rows(byLoadout, MAX_LOADOUTS),
-        loadoutCount: byLoadout.size,
+        loadouts: rows(byLoadout),
         /** strats with the exact hero variant: "Quincy_Cyber|Alchemist,Druid,Ninja" */
-        loadoutVariants: rows(byLoadoutVariant, MAX_LOADOUTS),
-        loadoutVariantCount: byLoadoutVariant.size,
+        loadoutVariants: rows(byLoadoutVariant),
         /** strats without the hero: "Alchemist,Druid,Ninja" */
-        trios: rows(byTrio, MAX_LOADOUTS),
-        trioCount: byTrio.size,
+        trios: rows(byTrio),
         /** the focus on each map (ignores the map filter), with the group's games there */
         maps: rows(byMap).map((r) => ({
             ...r,
