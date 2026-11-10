@@ -3,6 +3,7 @@ import { env } from '@/config/environment';
 import CORS from '@/middleware/cors';
 import router from '@/router';
 import { startMatchesScheduler } from '@/routes/matchesHistory';
+import { loadClanMembers } from '@/services/clanMembers';
 import connectDB from '@/services/database';
 import { startLeaderboardScheduler } from '@/services/leaderboard';
 import { listProfileAssetUrls } from '@/services/profileStore';
@@ -23,6 +24,7 @@ await connectDB();
 void listProfileAssetUrls()
     .then((urls) => urls.forEach(learnAssetUrl))
     .catch((e) => logger.error(`Learning stored asset links failed: ${e}`));
+void loadClanMembers().catch((e) => logger.error(`Loading the clan members failed: ${e}`));
 await startSeasonsScheduler();
 
 (async () => {

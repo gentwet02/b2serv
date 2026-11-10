@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { PROFILES_MAX_CACHED } from '@/config/cache';
 import { COLLECTIONS } from '@/config/db';
+import { setPlayerClans } from '@/services/clanMembers';
 import {
     ensureCodes,
     ensurePlayers,
@@ -135,6 +136,17 @@ export async function storeReadings(
     if (ops.length > 0) await collection().bulkWrite(ops, { ordered: false });
     // keep the cache equal to what was stored (dates are kept to the minute)
     for (const code of changed) memory.delete(code);
+    // the clan each of them is in now (only the changes are written)
+    try {
+        await setPlayerClans(
+            [...changed].map((code) => {
+                const guild = docs.get(code)!.gu;
+                return [code, guild === undefined ? undefined : findName('guild', guild)];
+            }),
+        );
+    } catch (error) {
+        logger.error(`Updating the clan members failed: ${error}`);
+    }
     return { players: changed.size, readings: sorted.length };
 }
 
@@ -157,6 +169,18 @@ export async function getProfileSeason(userId: string, seasonId: number) {
     const doc = (await loadDocs([code])).get(code);
     if (!doc || !doc.s.some((s) => s.i === seasonId)) return null;
     return decodeSeasons(doc, codec).find((s) => s.seasonId === seasonId) ?? null;
+}
+
+/**
+ * NK's lifetime ranked record (wins, losses, draws) of each of these players, by player code;
+ * the ones without a stored profile are left out.
+ */
+export async function getLifetimeRecords(codes: number[]) {
+    const records = new Map<number, [wins: number, losses: number, draws: number]>();
+    for (const [code, doc] of await loadDocs(codes)) {
+        records.set(code, [doc.r[0], doc.r[2], doc.r[1]]);
+    }
+    return records;
 }
 
 /** Avatar link of each stored player (players without a stored profile are left out). */

@@ -116,6 +116,26 @@ function priorGames(entries: Wld[]): number {
     return Math.min(max, Math.max(H2H_PRIOR.min, K));
 }
 
+/** The shrunk win rate of a record among these entries (see `extremes`). */
+function scorer(entries: Map<string, Wld>, overall: Wld) {
+    const K = priorGames([...entries.values()]);
+    // overall rate, itself pulled a bit toward 50% so a 3–0 total doesn't pin every score at 100%
+    const prior = (overall[0] + 1) / (overall[0] + overall[1] + 2);
+    return (r: Wld) => (r[0] + K * prior) / (r[0] + r[1] + K);
+}
+
+/**
+ * Every entry with a win or a loss, the best shrunk win rate first (the score of `extremes`):
+ * a ranking where both the games played and the win rate count. Same score: most games first.
+ */
+export function byScore(entries: Map<string, Wld>, overall: Wld) {
+    const scoreOf = scorer(entries, overall);
+    return [...entries]
+        .filter(([, r]) => r[0] + r[1] > 0)
+        .map(([key, record]) => ({ key, record, score: scoreOf(record) }))
+        .sort((p, q) => q.score - p.score || gamesOf(q.record) - gamesOf(p.record));
+}
+
 /**
  * Best and worst among the entries played at least `min` times, by win rate shrunk toward the
  * overall rate (Bayesian average): (wins + K·p) / (wins + losses + K), K from `priorGames`.
@@ -123,11 +143,8 @@ function priorGames(entries: Wld[]): number {
  * its own rate dominates. Draws don't count. At the same score, the one with more games first.
  * A best needs at least one win, a worst at least one loss.
  */
-function extremes(entries: Map<string, Wld>, min: number, overall: Wld) {
-    const K = priorGames([...entries.values()]);
-    // overall rate, itself pulled a bit toward 50% so a 3–0 total doesn't pin every score at 100%
-    const prior = (overall[0] + 1) / (overall[0] + overall[1] + 2);
-    const scoreOf = (r: Wld) => (r[0] + K * prior) / (r[0] + r[1] + K);
+export function extremes(entries: Map<string, Wld>, min: number, overall: Wld) {
+    const scoreOf = scorer(entries, overall);
     const ok = [...entries]
         .filter(([, r]) => gamesOf(r) >= min && r[0] + r[1] > 0)
         .map(([key, record]) => ({ key, record, score: scoreOf(record) }));
@@ -148,7 +165,7 @@ function extremes(entries: Map<string, Wld>, min: number, overall: Wld) {
     };
 }
 
-function mostPlayed(entries: Map<string, Wld>): H2hPick | null {
+export function mostPlayed(entries: Map<string, Wld>): H2hPick | null {
     let top: H2hPick | null = null;
     for (const [key, record] of entries) {
         if (!top || gamesOf(record) > gamesOf(top.record)) top = { key, record };
@@ -399,45 +416,4 @@ async function computeHeadToHead(
 export async function storedNameOf(userId: string) {
     await loadCodeBook();
     return { name: nameOfUser(userId), alias: aliasOf(userId) ?? null };
-}
-
-/** Everyone the player met in these seasons, most games first (the "pick a player" list). */
-export function opponentsMet(userId: string, seasonIds: number[]) {
-    return cached(`met:${userId}:${seasonIds.join(',')}`, () =>
-        heavy(async () => {
-            await loadCodeBook();
-            const me = playerCodeOf(userId);
-            if (me === undefined) return [];
-            const records = new Map<number, Wld>();
-            for (const seasonId of seasonIds) {
-                const docs = await collection(seasonId)
-                    .find(
-                        { $or: [{ a: me }, { b: me }] },
-                        { projection: { a: 1, b: 1, d: 1 }, maxTimeMS: HEAVY_QUERY_MAX_MS },
-                    )
-                    .toArray();
-                for (const doc of docs) {
-                    const left = doc.a === me;
-                    const i = resultFor(doc, left);
-                    if (i !== undefined) bump(records, left ? doc.b : doc.a, i);
-                }
-            }
-            return [...records]
-                .map(([code, record]) => {
-                    const player = playerOf(code);
-                    const others = player ? (player.o ?? []) : [];
-                    return {
-                        userId: player?.u ?? '',
-                        name: player?.n ?? null,
-                        alias: aliasOf(player?.u ?? '') ?? null,
-                        tag: tagOf(player?.u ?? '') ?? null,
-                        ...(others.length > 0 && { oldNames: others }),
-                        record,
-                    };
-                })
-                .filter((o) => o.userId && o.userId !== userId)
-                .sort((a, b) => gamesOf(b.record) - gamesOf(a.record))
-                .slice(0, 500);
-        }),
-    );
 }

@@ -5,7 +5,7 @@ import type { FirstSide, RangeSpec, SideSpec } from '@/services/sides';
 import type { VersusRange } from '@/types/leaderboard';
 import { parseMapFilter } from '@/utils/matchLabels';
 import { isVersusRange } from '@/validators/leaderboard';
-import { isNkUserId } from '@/validators/nk';
+import { isNkGuildId, isNkUserId } from '@/validators/nk';
 import { NAME_PARAM } from '@/validators/params';
 
 /** Query parameter readers shared by the stats and compare routes. */
@@ -73,26 +73,38 @@ function parseRange(range: string | undefined, exclude: string | undefined): Ran
 
 /**
  * The two sides, the same way on /stats and /compare:
- *   side 1  ?player=<id>,  or ?players=t25 (default) &exclude=t10
- *   side 2  &player2=<id>, or &players2=t100 &exclude2=t25, neither: against anyone
- * 'invalid' for a malformed id or the same player on both sides.
+ *   side 1  ?player=<id>,  ?clan=<id>,  or ?players=t25 (default) &exclude=t10
+ *   side 2  &player2=<id>, &clan2=<id>, or &players2=t100 &exclude2=t25, none: against anyone
+ * A player goes before a clan, a clan before a range.
+ * 'invalid' for a malformed id, or the same player or clan on both sides.
  */
 export function parseSides(query: Query): { a: FirstSide; b: SideSpec } | 'invalid' {
     const player = query('player');
     const player2 = query('player2');
+    const clan = query('clan');
+    const clan2 = query('clan2');
     if (
         (player !== undefined && !isNkUserId(player)) ||
-        (player2 !== undefined && !isNkUserId(player2))
+        (player2 !== undefined && !isNkUserId(player2)) ||
+        (clan !== undefined && !isNkGuildId(clan)) ||
+        (clan2 !== undefined && !isNkGuildId(clan2))
     ) {
         return 'invalid';
     }
     if (player && player === player2) return 'invalid';
-    const a: FirstSide = player ? { player } : parseRange(query('players'), query('exclude'));
+    if (!player && !player2 && clan && clan === clan2) return 'invalid';
+    const a: FirstSide = player
+        ? { player }
+        : clan
+          ? { clan }
+          : parseRange(query('players'), query('exclude'));
     const b: SideSpec = player2
         ? { player: player2 }
-        : query('players2') !== undefined
-          ? parseRange(query('players2'), query('exclude2'))
-          : { anyone: true };
+        : clan2
+          ? { clan: clan2 }
+          : query('players2') !== undefined
+            ? parseRange(query('players2'), query('exclude2'))
+            : { anyone: true };
     return { a, b };
 }
 

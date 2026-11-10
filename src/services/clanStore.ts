@@ -2,8 +2,10 @@ import mongoose from 'mongoose';
 import { CLAN_FETCH_CONCURRENCY, CLAN_REFRESH_MS } from '@/config/crawler';
 import { COLLECTIONS } from '@/config/db';
 import { NK_API } from '@/config/nk';
+import { knownClans, loadClanMembers } from '@/services/clanMembers';
 import { playerCodeOf, playerOf } from '@/services/codeBook';
 import { assetKey, assetUrl } from '@/services/profileFormat';
+import type { Clan, ClanSummary } from '@/types/clan';
 import { fixAssetUrl } from '@/utils/assets';
 import { fetchWithRetry } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
@@ -46,23 +48,10 @@ interface ClanDoc {
     t: Date;
 }
 
-/** A clan as the API serves it. */
-export interface Clan {
-    id: string;
-    name: string;
-    bannerURL: string | null;
-    tagline: string | null;
-    members: number;
-    status: string;
-    ownerId: string | null;
-    /** the owner's name, when they are a player we know */
-    ownerName: string | null;
-}
-
 const collection = () => mongoose.connection.collection<ClanDoc>(COLLECTIONS.CLANS);
 const memory = new Map<string, ClanDoc>();
 
-const GUILD_ID = /\/guild\/([0-9a-f]{16,64})/i;
+const GUILD_ID = /\/guild\/([0-9a-f]{48})(?![0-9a-f])/i;
 const USER_ID = /\/users\/([0-9a-f]{16,64})/i;
 
 /** "https://data.ninjakiwi.com/battles2/guild/9fb9…" → "9fb9…" */
@@ -107,6 +96,39 @@ function toClan(doc: ClanDoc): Clan {
 export async function getClan(id: string): Promise<Clan | null> {
     const doc = (await loadClans([id])).get(id);
     return doc && doc.s !== 'DISBANDED' ? toClan(doc) : null;
+}
+
+/** Name and banner of the clans we have a reading of (disbanded ones left out), by id. */
+export async function clanLabels(ids: string[]) {
+    const labels = new Map<string, { name: string; bannerURL: string | null }>();
+    for (const [id, doc] of await loadClans(ids)) {
+        if (doc.s === 'DISBANDED') continue;
+        labels.set(id, { name: doc.n, bannerURL: doc.b ? fixAssetUrl(assetUrl(doc.b)) : null });
+    }
+    return labels;
+}
+
+/**
+ * Every clan with a player we know, the most known players first. Clans we have no reading
+ * of yet (or that were disbanded) are left out.
+ */
+export async function listClans(): Promise<ClanSummary[]> {
+    await loadClanMembers();
+    const known = knownClans();
+    const docs = await loadClans(known.map((c) => c.id));
+    const clans: ClanSummary[] = [];
+    for (const { id, known: count } of known) {
+        const doc = docs.get(id);
+        if (!doc || doc.s === 'DISBANDED') continue;
+        clans.push({
+            id,
+            name: doc.n,
+            bannerURL: doc.b ? fixAssetUrl(assetUrl(doc.b)) : null,
+            members: doc.m,
+            known: count,
+        });
+    }
+    return clans.sort((x, y) => y.known - x.known || x.name.localeCompare(y.name));
 }
 
 /** Reads the clans we have no fresh reading of. A clan NK doesn't answer for is tried next time. */

@@ -7,6 +7,7 @@ import {
     pack,
     packVarints,
     profileNames,
+    storedGuildCode,
     unpack,
     streakFromReading,
     unpackVarints,
@@ -159,6 +160,17 @@ describe('profile round trip', () => {
         const doc = read(null, codec, b, day(0), 19);
         expect(doc.ga).toBeUndefined();
         expect(decodeProfile(doc, 'Fabim', codec).badges_all).toEqual([]);
+    });
+
+    test('the guild code reads without unpacking the rest', () => {
+        const codec = memoryCodec();
+        const b = body([767, 0, 320, 0, 23]);
+        const doc = read(null, codec, b, day(0), 19);
+        expect(doc.gu).toBeDefined();
+        expect(storedGuildCode(pack(doc))).toBe(doc.gu);
+        // out of the clan at the next reading: none
+        const left = read(doc, codec, { ...b, inGuild: false, guild: null }, day(1), 19);
+        expect(storedGuildCode(pack(left))).toBeUndefined();
     });
 
     test('decode gives back the NK body', () => {

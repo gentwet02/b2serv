@@ -21,3 +21,5 @@ export const NK_NO_LEAGUE = 'none';
 
 /** NK user ids: 48 alphanumeric chars. validators/nk.ts isNkUserId checks one. */
 export const NK_USER_ID = /^[a-z0-9]{48}$/i;
+/** NK guild (clan) ids: 48 hex chars. validators/nk.ts isNkGuildId checks one. */
+export const NK_GUILD_ID = /^[0-9a-f]{48}$/i;

@@ -25,10 +25,12 @@ const responses = new Map<string, { data: unknown; expires: number }>();
  * GET /stats: hero, tower, strat and map usage and win rates, from a group's side
  *   ?season=46 | 40-47 | all  default: live season
  *   &player=<id>           one player's games
+ *   &clan=<id>             or a clan's: its known members of today, in every season
  *   &players=t10|t25|t50|t100|t25p|t50p|t75p|all
  *                          or a range of each season's leaderboard (default t25);
  *   &exclude=t10           leave out a smaller range: the top 50 without the top 10
  *   &player2=<id>          only their games against one player…
+ *   &clan2=<id>            …or against a clan…
  *   &players2=t100&exclude2=t25  …or against a range of each leaderboard (default: anyone)
  *   &overlap=0             a player in both ranges only for side 1 (default: on both sides)
  *   &map=oasis             a map key, both versions; oasis:classic | oasis:reversed for one
@@ -45,7 +47,7 @@ stats.get('/', async (c) => {
     const seasonParam = c.req.query('season');
     const read = parseSides(query);
     if (read === 'invalid') {
-        const message = 'Invalid or identical players';
+        const message = 'Invalid or identical sides';
         return c.json({ message, error: message }, 400);
     }
     const { a, b } = read;
@@ -143,6 +145,8 @@ stats.get('/', async (c) => {
             player: sideA.userId
                 ? { userId: sideA.userId, name: sideA.name, alias: sideA.alias }
                 : null,
+            /** side 1's clan (clan mode) */
+            clan: sideA.clan,
             /** who they played: null for anyone */
             against: isAnyone(b) ? null : await describeSide(b),
             /** a player in both ranges counts on both sides */

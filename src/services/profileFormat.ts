@@ -636,6 +636,12 @@ export function pack(doc: ProfileDoc): StoredProfileDoc {
     return stored;
 }
 
+/** The guild code of a stored profile, without unpacking the rest (layout: packCurrent). */
+export function storedGuildCode(stored: Pick<StoredProfileDoc, 'v'>): number | undefined {
+    const [format, , guild = 0] = fromBinary(stored.v);
+    return format === FORMAT && guild > 0 ? guild - 1 : undefined;
+}
+
 export function unpack(stored: StoredProfileDoc): ProfileDoc {
     const v = cursor(fromBinary(stored.v));
     const format = v.one();

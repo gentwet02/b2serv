@@ -91,6 +91,8 @@ export function getRankRange(seasonId: number, from: number, to: number) {
 
 export const getSeasonRank = (seasonId: number, userId: NkUserId) =>
     seasonRanks.get(seasonId)?.get(userId)?.rank ?? null;
+export const getSeasonScore = (seasonId: number, userId: NkUserId) =>
+    seasonRanks.get(seasonId)?.get(userId)?.score ?? null;
 
 export function getRankHistory(userId: NkUserId) {
     const live = getLiveSeason();

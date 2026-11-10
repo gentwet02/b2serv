@@ -3,10 +3,11 @@ import { getConnInfo } from 'hono/bun';
 import { ERROR_MESSAGES } from '@/config/errors';
 import { MAX_H2H_OPPONENTS } from '@/config/limits';
 import { clanIdOf, getClan } from '@/services/clanStore';
-import { headToHead, opponentsMet, type OpponentInput } from '@/services/h2h';
+import { headToHead, type OpponentInput } from '@/services/h2h';
 import { getNameHistory, getRankHistory, readLeaderboard } from '@/services/leaderboard';
 import { getLiveMatches } from '@/services/liveMatches';
 import { getPlayerSeasonRecords, getSeasonStats } from '@/services/matchStore';
+import { opponentsOfSide } from '@/services/opponents';
 import { getProfileSeason, getStoredProfile } from '@/services/profileStore';
 import { resolveSeasons } from '@/services/ranges';
 import { getLiveSeason, getSeasonById } from '@/services/seasons';
@@ -231,8 +232,8 @@ users.get('/:id/opponents', async (c) => {
         return c.json({ message, error: message }, 404);
     }
     try {
-        const opponents = await opponentsMet(
-            id,
+        const { opponents } = await opponentsOfSide(
+            { player: id },
             seasons.map((s) => s.seasonId),
         );
         c.header('Cache-Control', 'public, max-age=60');

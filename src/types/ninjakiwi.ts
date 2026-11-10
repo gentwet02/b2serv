@@ -15,6 +15,8 @@ export type NkAssetUrl = `${typeof NK_ASSET_URL_PREFIX}${string}`;
 
 /** A user id checked with isNkUserId, or taken from one of NK's own links. */
 export type NkUserId = string & { readonly __brand: 'NkUserId' };
+/** A guild (clan) id checked with isNkGuildId. */
+export type NkGuildId = string & { readonly __brand: 'NkGuildId' };
 
 /**
  * A value NK usually sends, or a new one it added since (we keep those, see matchIssues).

@@ -1,14 +1,26 @@
 import {
     NK_API_BASE_URL,
     NK_ASSET_URL_PREFIX,
+    NK_GUILD_ID,
     NK_GUILD_URL_PREFIX,
     NK_USER_ID,
     NK_USER_URL_PREFIX,
 } from '@/config/nk';
-import type { NkApi, NkAssetUrl, NkGuildUrl, NkProfileUrl, NkUserId } from '@/types/ninjakiwi';
+import type {
+    NkApi,
+    NkAssetUrl,
+    NkGuildId,
+    NkGuildUrl,
+    NkProfileUrl,
+    NkUserId,
+} from '@/types/ninjakiwi';
 
 export function isNkUserId(id: string): id is NkUserId {
     return NK_USER_ID.test(id);
+}
+
+export function isNkGuildId(id: string): id is NkGuildId {
+    return NK_GUILD_ID.test(id);
 }
 
 /** A link to NK's data API ("https://data.ninjakiwi.com/battles2/…"). */

@@ -1,4 +1,5 @@
 export { avatars } from './avatars';
+export { clans } from './clans';
 export { compare } from './compare';
 export { info } from './info';
 export { leaderboard } from './leaderboard';
