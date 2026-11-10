@@ -12,6 +12,7 @@ export const playerNames: { [key: string]: string } = {
     '9fb710dad996f8ad1847da1a587ae57f9d004cb59b43d06d': 'Ambroez_alt',
     '9fb710dad996f0f44b10db425a21e324cc011cb8cb18d16a': 'Ambroez_old',
     '9fba1e8f8d97f1a41f10871e5777b3259f5619e8ca19dd6d': 'Angry Worms',
+    '9fb71e8d8b9effa14c14884f5976b522cb0614b59611df3e': 'Aqulineb',
     '9fbb448d8ec3fba6111488430926e176c4561cbc9a13da69': 'Ava',
     '9fbe468dd69efaa44a11da1a0c71e377cb504fbc9f148b3c': 'Awpple',
     '9fbe458d8bc2acf01c4286190b73e272c80119e99619df3e': 'Bacon',
