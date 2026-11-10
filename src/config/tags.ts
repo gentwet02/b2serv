@@ -12,7 +12,7 @@ export const BOOSTERS: { [userId: string]: string } = {
 };
 
 export const SUSPICIOUS: { [userId: string]: string } = {
-    '9fba43888ec3faf049408e485826e277cb0d4feeca448d3f': 'TurtleTime',
+    //'9fba43888ec3faf049408e485826e277cb0d4feeca448d3f': 'TurtleTime',
 };
 
 /** A search finds a tag from this many characters, typed from its start ("nuk" for nuker). */
