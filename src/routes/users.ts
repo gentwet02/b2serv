@@ -24,7 +24,8 @@ import { isNkUserId } from '@/validators/nk';
  *
  * GET /users/:id           stored profile (NK body + season records + clan + old names), never asks NK
  * GET /users/:id/matches   NK's latest matches (fallback when we stored none), rate limited
- * GET /users/:id/season    season record: stored matches (W/D/L, heroes) + stored profile (streaks)
+ * GET /users/:id/season    season record: stored matches (W/D/L, heroes) + stored profile (streaks);
+ *                          the live season, or the last one they played in when it has no game yet
  * GET /users/:id/seasons   W/D/L in every stored season, from the stored matches
  * GET /users/:id/ranks     rank in every stored season, best end-of-season finish
  * GET /users/:id/compare   the player against the season's top 10, or ?with=id1,id2…
@@ -124,16 +125,29 @@ users.get('/:id/season', async (c) => {
     const id = c.req.param('id');
     if (!isNkUserId(id)) return invalid(c);
     const seasonParam = c.req.query('season');
-    const season = seasonParam ? getSeasonById(Number(seasonParam)) : getLiveSeason();
-    if (!season) {
+    const live = getLiveSeason();
+    const asked = seasonParam ? getSeasonById(Number(seasonParam)) : live;
+    if (!asked) {
         const message = 'Unknown season';
         return c.json({ message, error: message }, 404);
     }
     try {
-        const [stats, record] = await Promise.all([
-            getSeasonStats(id, season.seasonId),
-            getProfileSeason(id, season.seasonId),
-        ]);
+        let season: { seasonId: number; name: string } = asked;
+        let stats = await getSeasonStats(id, season.seasonId);
+        // no season asked and no game in the live one yet: the last season they played in
+        if (!seasonParam && stats.wins + stats.losses + stats.draws === 0) {
+            const last = (await getPlayerSeasonRecords(id)).find(
+                (s) => s.wins + s.losses + s.draws > 0,
+            );
+            if (last && last.seasonId !== season.seasonId) {
+                season = getSeasonById(last.seasonId) ?? {
+                    seasonId: last.seasonId,
+                    name: `Season ${last.seasonId + 1}`,
+                };
+                stats = await getSeasonStats(id, season.seasonId);
+            }
+        }
+        const record = await getProfileSeason(id, season.seasonId);
         // streaks come from the profile readings: the stored matches miss games (only HoM
         // vs HoM, NK's 24-match window), which split or join streaks
         return c.json({
@@ -142,6 +156,8 @@ users.get('/:id/season', async (c) => {
             bestWinStreak: record?.bestWinStreak ?? null,
             record: record ? fixSeasonAssets(record) : null,
             seasonName: season.name,
+            /** the season is the live one (not the last one they played in) */
+            live: season.seasonId === live?.seasonId,
         });
     } catch (error) {
         logger.error(`Season stats of ${id} failed: ${error}`);

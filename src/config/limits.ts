@@ -6,7 +6,6 @@ export const MAX_AVATAR_IDS = 100;
 export const MAX_MATCHES_PAGE = 50;
 export const MAX_COMPARE_GAMES_PAGE = 50;
 export const MAX_H2H_OPPONENTS = 10;
-/** Clans on a clan page's head to head card: the top of the clans' ranking. */
 export const CLAN_H2H_OPPONENTS = 10;
 
 // ---------------------------------------------------------------------------

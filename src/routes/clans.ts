@@ -27,8 +27,8 @@ import { isNkGuildId } from '@/validators/nk';
  * GET /clans/:id   one clan and its known members (their rank in the live season, their best)
  * GET /clans/:id/overview   its members' games added up: this season (recorded matches) and
  *                  all time (NK's lifetime numbers), with the most active and best player
- *                  and the rival clans; season by season; against the top clans; and each
- *                  member's record
+ *                  and the rival clans; season by season; against every clan met (and
+ *                  which are the top clans); and each member's record
  *
  * A clan's games and stats: /stats and /compare with ?clan=<id>.
  */

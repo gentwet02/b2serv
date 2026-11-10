@@ -14,7 +14,7 @@ import {
 } from '@/services/h2h';
 import { collection, listMatchSeasons } from '@/services/matchStore';
 import { getLifetimeRecords } from '@/services/profileStore';
-import { getLiveSeason } from '@/services/seasons';
+import { getLiveSeason, getSeasonById } from '@/services/seasons';
 import type { NkGuildId } from '@/types/ninjakiwi';
 import { cached } from '@/utils/cache';
 import { heavy } from '@/utils/heavy';
@@ -73,13 +73,17 @@ async function computeOverview(clanId: NkGuildId, top: RankedClan[]) {
     const codes = clanMemberCodes(clanId);
     const mine = new Set(codes);
     const live = getLiveSeason();
-    const season = newTally();
+    /** the live season's games (the "this season" of the head to head and members) */
+    let season = newTally();
+    /** the newest season with a game: the live one, or the last one they played in */
+    let lastPlayed: { seasonId: number; tally: Tally } | null = null;
     const all = newTally();
     const seasons: { seasonId: number; wins: number; draws: number; losses: number }[] = [];
 
     for (const seasonId of codes.length > 0 ? await listMatchSeasons() : []) {
-        const record: Wld = [0, 0, 0];
-        const tallies = seasonId === live?.seasonId ? [all, season] : [all];
+        const own = newTally();
+        const { record } = own;
+        const tallies = [all, own];
         const cursor = collection(seasonId).find(
             { $or: [{ a: { $in: codes } }, { b: { $in: codes } }] },
             {
@@ -95,7 +99,6 @@ async function computeOverview(clanId: NkGuildId, top: RankedClan[]) {
                 if (!mine.has(me)) continue;
                 const i = resultFor(doc, left);
                 if (i === undefined) continue; // cancelled / lobby disconnect: not played
-                record[i]++;
                 const rival = clanIdOfPlayer(left ? doc.b : doc.a);
                 for (const tally of tallies) {
                     tally.record[i]++;
@@ -109,8 +112,11 @@ async function computeOverview(clanId: NkGuildId, top: RankedClan[]) {
                 }
             }
         }
+        if (seasonId === live?.seasonId) season = own;
         if (gamesOf(record) > 0) {
             seasons.push({ seasonId, wins: record[0], draws: record[2], losses: record[1] });
+            // seasons come oldest first
+            lastPlayed = { seasonId, tally: own };
         }
     }
 
@@ -125,6 +131,10 @@ async function computeOverview(clanId: NkGuildId, top: RankedClan[]) {
         lifetime.set(String(code), record);
         record.forEach((n, i) => (lifetimeTotal[i]! += n));
     }
+
+    // (typed: assigned in the loop above, which narrowing doesn't follow)
+    const last = lastPlayed as { seasonId: number; tally: Tally } | null;
+    const shown = last ?? (live ? { seasonId: live.seasonId, tally: season } : null);
 
     /** `record` and `players`: the games counted; the rival clans: always the recorded ones. */
     function summary(record: Wld, players: Map<string, Wld>, tally: Tally) {
@@ -153,28 +163,45 @@ async function computeOverview(clanId: NkGuildId, top: RankedClan[]) {
         };
     }
 
-    /** The record against each of the top clans, met or not. */
+    /** The record against each clan met that we can name, most games first. */
     function against(tally: Tally) {
-        return top.map((c) => ({
-            clan: { id: c.id, name: c.name, bannerURL: c.bannerURL, known: c.known },
-            record: tally.rivals.get(c.id) ?? ([0, 0, 0] as Wld),
-            lastMet: iso(tally.rivalsLast.get(c.id)),
-        }));
+        return [...tally.rivals]
+            .filter(([id]) => labels.has(id))
+            .map(([id, record]) => ({ id, record, lastMet: iso(tally.rivalsLast.get(id)) }))
+            .sort((x, y) => gamesOf(y.record) - gamesOf(x.record));
     }
 
     return {
-        /** the live season (null before the server knows it) */
-        season: live && {
-            seasonId: live.seasonId,
-            name: live.name,
-            ...summary(season.record, season.players, season),
+        /**
+         * The season card: the live season, or the last one they have a game in when they
+         * didn't play this one yet (null: no season known)
+         */
+        season: shown && {
+            seasonId: shown.seasonId,
+            name: getSeasonById(shown.seasonId)?.name ?? `Season ${shown.seasonId + 1}`,
+            live: shown.seasonId === live?.seasonId,
+            ...summary(shown.tally.record, shown.tally.players, shown.tally),
         },
+        /** the season "this season" stands for in the head to head and the members */
+        liveSeason: live && { seasonId: live.seasonId, name: live.name },
         /** NK's lifetime numbers (the rival clans: from the recorded matches) */
         allTime: summary(lifetimeTotal, lifetime, all),
         /** newest first, the seasons with a game */
         seasons: seasons.reverse(),
-        /** against the top clans (clanRanking.ts) */
-        headToHead: { season: against(season), all: against(all) },
+        /**
+         * `top`: the top clans (clanRanking.ts), the card's default opponents; then the record
+         * against every clan met, this season and in every season (any of them can be picked)
+         */
+        headToHead: {
+            top: top.map((c) => ({
+                id: c.id,
+                name: c.name,
+                bannerURL: c.bannerURL,
+                known: c.known,
+            })),
+            season: against(season),
+            all: against(all),
+        },
         /** each member with a game: their record this season and in every season */
         members: [...all.players].flatMap(([key, record]) => {
             const userId = playerOf(Number(key))?.u;
