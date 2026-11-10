@@ -226,7 +226,8 @@ const isNewName = (player: PlayerEntry, name: string) =>
 
 /**
  * Makes sure every player has a code, and keeps every name they went by.
- *  rename: true   live data: the name becomes current, the previous one is kept in `o`
+ *  rename: true   live data: the latest name becomes current, even one they used before,
+ *                 and the previous one is kept in `o`
  *  rename: false  old data: the current name stays, the old one is added to `o`
  */
 export function ensurePlayers(
@@ -245,7 +246,11 @@ export function ensurePlayers(
 
     function changed(u: string) {
         const player = playerOf(playerByUser.get(u)!);
-        return !!player && seen.get(u)!.some((name) => isNewName(player, name));
+        if (!player) return false;
+        const names = seen.get(u)!;
+        // a player back on an old name isn't new to us, but it is a rename
+        if (rename && names.at(-1) !== player.n) return true;
+        return names.some((name) => isNewName(player, name));
     }
     const missing = [...seen.keys()].filter((u) => !playerByUser.has(u));
     const known = [...seen.keys()].filter((u) => playerByUser.has(u) && changed(u));
@@ -273,40 +278,37 @@ export function ensurePlayers(
             for (const doc of docs) addPlayer(doc);
         }
 
-        const updates: { u: string; set?: string; add: string[] }[] = [];
+        const updates: { u: string; n: string; o: string[]; add: string[]; renamed: boolean }[] =
+            [];
         for (const u of known) {
             const code = playerByUser.get(u)!;
             const player = playerOf(code);
             if (!player) continue;
-            const fresh = seen.get(u)!.filter((name) => isNewName(player, name));
-            if (fresh.length === 0) continue;
-            if (rename) {
-                const n = fresh.at(-1)!;
-                const add = [player.n, ...fresh.filter((name) => name !== n)];
-                updates.push({ u, set: n, add });
-            } else {
-                updates.push({ u, add: fresh });
-            }
+            const names = seen.get(u)!;
+            const fresh = names.filter((name) => isNewName(player, name));
+            const n = rename ? names.at(-1)! : player.n;
+            const renamed = n !== player.n;
+            if (!renamed && fresh.length === 0) continue;
+            const add = renamed ? [player.n, ...fresh] : fresh;
+            // `o` stays oldest first: a name used again leaves it and becomes `n`
+            const o = [...new Set([...(player.o ?? []), ...add])].filter((name) => name !== n);
+            updates.push({ u, n, o, add, renamed });
         }
         if (updates.length === 0) return;
 
         await playersCollection().bulkWrite(
-            updates.map(({ u, set, add }) => ({
+            updates.map(({ u, n, o, add, renamed }) => ({
                 updateOne: {
                     filter: { u },
-                    update: {
-                        ...(set !== undefined && { $set: { n: set } }),
-                        $addToSet: { o: { $each: add } },
-                    },
+                    // a rename has to take the name out of `o`, which $addToSet can't do;
+                    // otherwise $addToSet keeps any names another writer added meanwhile
+                    update: renamed ? { $set: { n, o } } : { $addToSet: { o: { $each: add } } },
                 },
             })),
             { ordered: false },
         );
-        for (const { u, set, add } of updates) {
+        for (const { u, n, o } of updates) {
             const code = playerByUser.get(u)!;
-            const player = playerOf(code)!;
-            const n = set ?? player.n;
-            const o = [...new Set([...(player.o ?? []), ...add])].filter((name) => name !== n);
             playerByCode.set(code, o.length ? { u, n, o } : { u, n });
         }
     });
