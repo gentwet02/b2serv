@@ -66,6 +66,7 @@ clans.get('/:id', async (c) => {
         if (live) await readLeaderboard(live);
         const members: ClanMember[] = clanMemberIds(id).map((userId) => {
             const { seasons } = getRankHistory(userId);
+            const ranks = seasons.map((s) => s.rank).sort((x, y) => x - y);
             return {
                 userId,
                 name: nameOfUser(userId),
@@ -73,8 +74,9 @@ clans.get('/:id', async (c) => {
                 tag: tagOf(userId) ?? null,
                 rank: live ? getSeasonRank(live.seasonId, userId) : null,
                 score: live ? getSeasonScore(live.seasonId, userId) : null,
-                bestRank: seasons.length ? Math.min(...seasons.map((s) => s.rank)) : null,
+                bestRank: ranks[0] ?? null,
                 bestScore: seasons.length ? Math.max(...seasons.map((s) => s.score)) : null,
+                ranks,
             };
         });
         members.sort(

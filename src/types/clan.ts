@@ -37,4 +37,6 @@ export interface ClanMember {
     /** best rank and best score in any season's leaderboard, the live one included */
     bestRank: number | null;
     bestScore: number | null;
+    /** their rank in every season they ranked in, best first: what breaks a tie on the best */
+    ranks: number[];
 }
