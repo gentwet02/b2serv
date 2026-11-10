@@ -97,6 +97,7 @@ export const playerNames: { [key: string]: string } = {
     '9cba128cd6c7fca44d42884b5f27b776cc0c1be99917de30': 'Sniper',
     '9ced168cdd92afa311118719577ab022cd0749b9cc19dd6d': 'ShrekTheOnion',
     '9fb6178edec3afa519438c4c5722e124cc521dbcca118c6a': 'StoopidMuhnkey',
+    '9cee1ede8a91f9a11a4a8d1e0c75ee77cc571bb49e128e31': 'SuperTiger',
     '9fbe1588d8c7f9f14e41d9425c26e024c4004ebb9915893b': 'SweetyMonkey',
     '9fbe41de8991aca34c108f1e5721b773cf5014bb9b13de31': 'SweetyMonkey_alt',
     '9fbd108d8b90fef0111789425f73e777ca074eefcf198c30': "TheBest'oNe",
