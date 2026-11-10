@@ -110,6 +110,7 @@ export const playerNames: { [key: string]: string } = {
     '9fbe468ddbc5f9a21f418b435722e77598524cb8c8198b3f': 'V',
     '9fbe10d98c9ef8a211108d4a5a22e5769a0d1ab99a42d839': 'Vuldora',
     '9cb9118fd893f0a34c46894e5875b476cc0d14bccf108d3f': 'Wilfykeen',
+    '9cea168c8d90aba3494bda495f27e7709a5249e9c8128b3b': 'Withmere',
     '9cbb438d8e97fef34e408d4c5622b57ecc564fbd9f158d6a': 'Xaou',
     '9fb74582d89ff1f31b43dc4b0a20b073c5031ab997458a3b': 'XTheMonkey',
     '9fb84382d997aaa71f148e495b71b07ec4014bb89941d038': 'Yapper',
