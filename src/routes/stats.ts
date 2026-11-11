@@ -32,6 +32,10 @@ const responses = new Map<string, { data: unknown; expires: number }>();
  *   &player2=<id>          only their games against one player…
  *   &clan2=<id>            …or against a clan…
  *   &players2=t100&exclude2=t25  …or against a range of each leaderboard (default: anyone)
+ *   &list=p:<id>,c:<id>,r:t50-t10  several players, clans and ranges counted together
+ *   &list2=…               the same for who they played
+ *   &not=p:<id>,c:<id>,r:t10  players, clans and ranges left out of the players counted
+ *   &not2=…                the same for who they played
  *   &overlap=0             a player in both ranges only for side 1 (default: on both sides)
  *   &map=oasis             a map key, both versions; oasis:classic | oasis:reversed for one
  *   &hero=Quincy           a hero base
@@ -147,6 +151,10 @@ stats.get('/', async (c) => {
                 : null,
             /** side 1's clan (clan mode) */
             clan: sideA.clan,
+            /** side 1's players, clans and ranges (list mode) */
+            list: 'list' in sideA ? sideA.list : null,
+            /** who side 1 leaves out (null: nobody) */
+            not: sideA.not,
             /** who they played: null for anyone */
             against: isAnyone(b) ? null : await describeSide(b),
             /** a player in both ranges counts on both sides */

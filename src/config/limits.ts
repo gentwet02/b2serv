@@ -7,6 +7,8 @@ export const MAX_MATCHES_PAGE = 50;
 export const MAX_COMPARE_GAMES_PAGE = 50;
 export const MAX_H2H_OPPONENTS = 10;
 export const CLAN_H2H_OPPONENTS = 10;
+/** Players, clans and ranges listed together on one side of /stats and /compare. */
+export const MAX_SIDE_PARTS = 12;
 
 // ---------------------------------------------------------------------------
 // Heavy reads (stats, compare, head to head, opponents met), see utils/heavy.ts.

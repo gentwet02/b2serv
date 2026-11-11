@@ -4,7 +4,7 @@ import { MAX_COMPARE_GAMES_PAGE } from '@/config/limits';
 import { runCompare, runCompareGames } from '@/services/compare';
 import { opponentsOfSide } from '@/services/opponents';
 import { resolveSeasons } from '@/services/ranges';
-import { isClan, isPlayer } from '@/services/sides';
+import { isPicked } from '@/services/sides';
 import type { MatchSort } from '@/types/match';
 import { isOverloaded } from '@/utils/heavy';
 import { logger } from '@/utils/logger';
@@ -48,6 +48,9 @@ function readQuery(c: Context) {
  *                                         side 1: one player, a clan, or a range of each leaderboard
  *   &player2=<id> | &clan2=<id> | &players2=all&exclude2=t25
  *                                         side 2 the same way; none: against anyone
+ *   &list=p:<id>,c:<id>,r:t50-t10 | &list2=…
+ *                                         a side of several players, clans and ranges together
+ *   &not=p:<id>,c:<id>,r:t10 | &not2=…    players, clans and ranges a side leaves out
  *   &overlap=0                            a player in both ranges only for side 1 (default: both sides)
  *   &map &exMaps                          only the games on (or not on) these maps
  *   &hero &towers &exHeroes &exTowers     side 1's loadout, as /stats
@@ -70,16 +73,16 @@ compare.get('/', async (c) => {
 
 /**
  * GET /compare/games: the games between the two sides, one page
- *   (the parameters of GET /compare, with a player or a clan on at least one side)
+ *   (the parameters of GET /compare, with no range on at least one side)
  *   &sort=newest|oldest|longest|shortest|rounds   default newest
  *   &offset=0&limit=30                            at most 50 a page
  */
 compare.get('/games', async (c) => {
     const read = readQuery(c);
     if (!read) return fail(c, 'Invalid or identical sides', 400);
-    // two ranges: too many games to sort and keep
-    if (![read.a, read.b].some((side) => isPlayer(side) || isClan(side))) {
-        return fail(c, 'The games list needs a player or a clan on one side', 400);
+    // a range on both sides: too many games to sort and keep
+    if (![read.a, read.b].some(isPicked)) {
+        return fail(c, 'The games list needs a side without a range', 400);
     }
     const sortParam = c.req.query('sort') ?? 'newest';
     const sort: MatchSort = isMatchSort(sortParam) ? sortParam : 'newest';
