@@ -101,6 +101,7 @@ export const playerNames: { [key: string]: string } = {
     '9cee1ede8a91f9a11a4a8d1e0c75ee77cc571bb49e128e31': 'SuperTiger',
     '9fbe1588d8c7f9f14e41d9425c26e024c4004ebb9915893b': 'SweetyMonkey',
     '9fbe41de8991aca34c108f1e5721b773cf5014bb9b13de31': 'SweetyMonkey_alt',
+    '9fbe448f8bc5fea24b178d185925e62598044fbb9a45de38': 'Tacay',
     '9fbd108d8b90fef0111789425f73e777ca074eefcf198c30': "TheBest'oNe",
     '9cb8138ed8c2a8a41146884e5f22b424cc0d4ebecd46dc6e': 'The Dogfather',
     '9cb8458cd790fdf31b41de4d5b26e177cc5049bb9d13dd6b': 'The Player',
