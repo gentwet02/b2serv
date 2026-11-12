@@ -32,6 +32,7 @@ import {
 } from '@/services/matchStore';
 import type { Match } from '@/types/match';
 import { readJsonObjects } from '@/utils/readJsonObjects';
+import { isRanked } from '@/validators/match';
 
 interface DumpRecord {
     season?: string; // NK HoM event id the record was read under, e.g. "mt8f8io3"
@@ -110,7 +111,7 @@ function chunks<T>(list: T[], size = BATCH_SIZE): T[][] {
 function leagueMatch(raw: unknown): Match | null {
     const match = (raw as DumpRecord).body;
     if (!match?.id || !match.playerLeft || !match.playerRight) return null;
-    if (match.gametype !== 'Ranked' || !match.league || match.league === NK_NO_LEAGUE) return null;
+    if (isRanked(match) || !match.league || match.league === NK_NO_LEAGUE) return null;
     return match;
 }
 
@@ -134,7 +135,7 @@ for (const dump of dumps) {
         if (!match) {
             if (!record.body?.id || !record.body.playerLeft || !record.body.playerRight) {
                 skipped.malformed++;
-            } else if (record.body.gametype !== 'Ranked') skipped.notRanked++;
+            } else if (isRanked(record.body)) skipped.notRanked++;
             else skipped.noLeague++;
             continue;
         }

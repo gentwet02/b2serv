@@ -10,6 +10,7 @@ export const GAME_RESULTS = [
 export const GAME_TYPES = ['Casual', 'Event', 'GuildWar', 'Ranked'] as const;
 
 export const MATCH_SORTS = ['newest', 'oldest', 'longest', 'shortest', 'rounds'] as const;
+export const MAX_RANKED_ROUND = 50;
 export const MAX_HEROES = 2;
 export const MAX_TOWERS = 6;
 /** Exclusions: none of these in the match (or on that side, in same player mode). */

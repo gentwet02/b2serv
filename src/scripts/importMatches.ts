@@ -23,6 +23,7 @@ import type { LeaderboardPlayer } from '@/types/leaderboard';
 import type { Match } from '@/types/match';
 import { extractUserId } from '@/utils/helpers';
 import { readJsonObjects } from '@/utils/readJsonObjects';
+import { isRanked } from '@/validators/match';
 
 interface ImportedRecord {
     _id?: string;
@@ -240,7 +241,7 @@ try {
             skipped.malformed++;
             continue;
         }
-        if (match.gametype !== 'Ranked') {
+        if (!isRanked(match)) {
             skipped.notRanked++;
             continue;
         }

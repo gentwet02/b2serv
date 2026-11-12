@@ -45,7 +45,7 @@ import {
     parseMapFilter,
 } from '@/utils/matchLabels';
 import { aliasOf, tagOf } from '@/utils/players';
-import { matchIssues } from '@/validators/match';
+import { isRanked, isValidRankedRound, matchIssues } from '@/validators/match';
 
 /**
  * Compact match storage: one collection per season, `matches_s<season>`, 6 small numbers per match.
@@ -125,8 +125,6 @@ function packLoadout(player: MatchPlayer): number | null {
     return hero + towers[0]! * 2 ** X.t1 + towers[1]! * 2 ** X.t2 + towers[2]! * 2 ** X.t3;
 }
 
-let unusualRounds = 0;
-
 function packInfo(match: Match): number | null {
     const result = codeOf('result', match.playerLeft.result);
     const map = codeOf('map', match.map);
@@ -139,8 +137,11 @@ function packInfo(match: Match): number | null {
         );
         return null;
     }
-    if (round > 60 && unusualRounds++ < 20) {
-        logger.warn(`Match ${match.id}: end round ${round} (${match.gametype}, ${match.map})`);
+    if (isRanked(match) && !isValidRankedRound(round)) {
+        logger.warn(
+            `Match ${match.id} skipped: end round ${round} (${match.gametype}, ${match.map})`,
+        );
+        return null;
     }
     return result + map * 2 ** D.map + round * 2 ** D.round + duration * 2 ** D.duration;
 }
@@ -495,7 +496,9 @@ function buildQuery(filter: FacetFilter): BuiltQuery | null {
     const exTowers = exTowerCodes(filter.exTowers);
 
     const playerCodes = resolvePlayers(filter.player, filter.playerId, filter.allNames);
-    const playerCodes2 = sameSide ? resolvePlayers(filter.player2, undefined, filter.allNames) : null;
+    const playerCodes2 = sameSide
+        ? resolvePlayers(filter.player2, undefined, filter.allNames)
+        : null;
     if (playerCodes?.length === 0 || playerCodes2?.length === 0) return null;
 
     // indexed part: players

@@ -28,6 +28,7 @@ import type { Match } from '@/types/match';
 import type { CrawlProgress, NkUserId } from '@/types/ninjakiwi';
 import { delay, extractUserId } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
+import { isRanked } from '@/validators/match';
 
 /**
  * The crawler only feeds the database: every HoM player's recent matches are read from NK
@@ -88,8 +89,6 @@ function seasonOfMatch(match: Match, crawled: number): number | null {
     if (!match.league || match.league === NK_NO_LEAGUE) return crawled;
     return seasonOfLeague(match.league);
 }
-
-const isRanked = (match: Match) => match.gametype === 'Ranked';
 
 let homIndex: { seasonId: number; updatedAt: Date; ids: Set<string> } | null = null;
 const homIds = (players: LeaderboardPlayer[]) =>

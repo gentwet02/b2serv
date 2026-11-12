@@ -1,4 +1,4 @@
-import { GAME_RESULTS, GAME_TYPES, MATCH_SORTS } from '@/config/matches';
+import { GAME_RESULTS, GAME_TYPES, MATCH_SORTS, MAX_RANKED_ROUND } from '@/config/matches';
 import { HERO_BASES, TOWERS } from '@/config/towers';
 import type { GameResult, GameType, Match, MatchIssue, MatchSort } from '@/types/match';
 import type { Hero, Tower } from '@/types/towers';
@@ -24,6 +24,14 @@ export function isGameResult(value: string): value is GameResult {
 
 export function isGameType(value: string): value is GameType {
     return gameTypes.has(value);
+}
+
+export function isRanked(match: Match) {
+    return match.gametype === 'Ranked';
+}
+
+export function isValidRankedRound(round: number) {
+    return round >= 0 && round <= MAX_RANKED_ROUND;
 }
 
 export function isMatchSort(value: string): value is MatchSort {
