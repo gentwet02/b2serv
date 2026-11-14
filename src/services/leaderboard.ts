@@ -13,6 +13,7 @@ import type { NkUserId } from '@/types/ninjakiwi';
 import { encodePlayer } from '@/utils/encode';
 import { extractUserId, type Priority } from '@/utils/helpers';
 import { logger } from '@/utils/logger';
+import { isOldName, latestSpellings } from '@/utils/players';
 import { scheduleEvery } from '@/utils/scheduler';
 
 interface LeaderboardEntry {
@@ -185,13 +186,13 @@ export function getNameHistory(userId: NkUserId, currentName: string): string[] 
         if (name) latestSeason.set(name, Math.max(seasonId, latestSeason.get(name) ?? -1));
     }
 
-    const isOld = (name: string) => name !== currentName && name !== 'Unknown player';
+    const isOld = (name: string) => isOldName(name, currentName);
     const recorded = nameTimelineOf(userId).filter(isOld);
     // a name ranked under but missing from the code book (shouldn't happen): placed by season
     for (const name of latestSeason.keys()) {
         if (isOld(name) && !recorded.includes(name)) recorded.push(name);
     }
-    return orderNames(recorded, (name) => latestSeason.get(name)).reverse();
+    return latestSpellings(orderNames(recorded, (name) => latestSeason.get(name)).reverse());
 }
 
 /** Fetches a season from Ninja Kiwi, keeps it in memory and stores it in Mongo */
