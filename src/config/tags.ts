@@ -1,6 +1,7 @@
 /** Hand-kept player tags: user id → the name to show when `playerNames` has no alias. */
 export const CHEATERS: { [userId: string]: string } = {
     '9fee14dddc96a8ac4b4a8b4c0a75e074c4514bbacb148d6a': 'Corrupt Eggs',
+    '9fee418dd892f8a21b428e1e0972e67e98501be89f11dd3e': 'Zhou',
 };
 
 export const NUKERS: { [userId: string]: string } = {
