@@ -6,14 +6,20 @@ const TAGS = Object.keys(PLAYER_TAGS) as PlayerTag[];
 
 /** The player's tag, when they are on one of the lists in `config/tags.ts`. */
 export function tagOf(userId: string): PlayerTag | undefined {
-    return TAGS.find((tag) => Object.hasOwn(PLAYER_TAGS[tag], userId));
+    return TAGS.find((tag) => {
+        const list = PLAYER_TAGS[tag];
+        return list instanceof Set ? list.has(userId) : Object.hasOwn(list, userId);
+    });
 }
 
-/** The player's alias: `playerNames` first, then the name their tag list gives them. */
+/** The player's alias: `playerNames` first, then the name their tag list gives them, if any. */
 export function aliasOf(userId: string): string | undefined {
     if (Object.hasOwn(playerNames, userId)) return playerNames[userId];
     const tag = tagOf(userId);
-    return tag && PLAYER_TAGS[tag][userId];
+    if (!tag) return undefined;
+    const list = PLAYER_TAGS[tag];
+    // Id-only lists (sets) have no name to offer.
+    return list instanceof Set ? undefined : list[userId];
 }
 
 const squash = (name: string) => name.replace(/\s+/g, '').toLowerCase();
