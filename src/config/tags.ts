@@ -16,7 +16,7 @@ export const BOOSTERS: { [userId: string]: string } = {
 };
 
 export const HACKED: { [userId: string]: string } = {
-    '9fbe45dadbc7acf71d4087180d71e371980c4ee998178c39': 'Meem',
+    //'9fbe45dadbc7acf71d4087180d71e371980c4ee998178c39': 'Meem', // got the account back?
     '9fbd10da8dc0fbad1c408d1a5627e321cc0749ef9c43dd6b': 'Onesks',
 };
 
